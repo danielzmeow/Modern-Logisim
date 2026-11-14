@@ -5,7 +5,7 @@ import { useResolvedAppearance } from './useResolvedAppearance';
 import { PALETTES } from '../canvas/theme';
 import type { Appearance } from '../model/types';
 import type { Lang } from '../i18n';
-import { Check, Monitor, Moon, Sun, X } from 'lucide-react';
+import { Check, Info, Monitor, Moon, Sun, X } from 'lucide-react';
 
 export function Preferences({ onClose }: { onClose: () => void }) {
   const appearance = useEditor((s) => s.appearance);
@@ -17,6 +17,7 @@ export function Preferences({ onClose }: { onClose: () => void }) {
   const paletteOpen = useEditor((s) => s.paletteOpen);
   const shortcutsOpen = useEditor((s) => s.shortcutsOpen);
   const resolved = useResolvedAppearance();
+  const brightCanvas = resolved === 'dark' && canvasTheme === 'paper';
   const panelRef = useRef<HTMLDivElement>(null);
   const { t } = useT();
 
@@ -134,6 +135,18 @@ export function Preferences({ onClose }: { onClose: () => void }) {
                 );
               })}
             </div>
+            {brightCanvas && (
+              <div className="mt-1.5 flex items-center gap-1.5 text-[11px] leading-[1.45] text-[var(--text-muted)]">
+                <Info size={11} className="shrink-0 text-[var(--text-faint)]" />
+                <span className="min-w-0 flex-1">{t('prefs.canvasMismatch')}</span>
+                <button
+                  className="shrink-0 font-medium text-[var(--accent-text)] transition-colors hover:text-[var(--accent)]"
+                  onClick={() => setCanvasTheme('graphite')}
+                >
+                  {t('prefs.graphite')}
+                </button>
+              </div>
+            )}
           </div>
 
           <div>

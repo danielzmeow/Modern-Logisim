@@ -13,20 +13,15 @@ import {
   ArrowLeft,
   ArrowRight,
   ArrowUp,
+  CircuitBoard,
   Copy,
   Minus,
   Plus,
   RotateCcw,
   RotateCw,
+  Sparkles,
   Trash2,
   X,
-  Play,
-  Pause,
-  MousePointer2,
-  Command,
-  Sparkles,
-  Table2,
-  FunctionSquare,
 } from 'lucide-react';
 
 function Section({ title, children }: { title: string; children: ReactNode }) {
@@ -45,6 +40,15 @@ function Row({ label, children }: { label: string; children: ReactNode }) {
     <div className="inspector-row">
       <span className="inspector-label">{label}</span>
       <div className="control">{children}</div>
+    </div>
+  );
+}
+
+function TipRow({ keys, label }: { keys: string; label: string }) {
+  return (
+    <div className="flex items-center justify-between gap-3 py-1 text-[11.5px] text-[var(--text-muted)]">
+      <span>{label}</span>
+      <kbd className="kbd !h-[17px] shrink-0 !text-[10px]">{keys}</kbd>
     </div>
   );
 }
@@ -965,10 +969,10 @@ export function Inspector() {
   const selWires = useEditor((s) => s.selWires);
   const setInspector = useEditor((s) => s.setInspector);
   const running = useEditor((s) => s.running);
-  const toggleRunning = useEditor((s) => s.toggleRunning);
   const simTick = useEditor((s) => s.simTick);
   const comps = doc.comps.filter((c) => selComps.includes(c.id));
   const selectedWires = doc.wires.filter((w) => selWires.includes(w.id));
+  const emptyCircuit = doc.comps.length === 0 && doc.wires.length === 0;
 
   const stats = useMemo(() => {
     if (comps.length || selectedWires.length) return null;
@@ -982,11 +986,6 @@ export function Inspector() {
       high,
     };
   }, [doc, comps.length, selectedWires.length, simTick]);
-
-  const reset = () => {
-    sim.reset();
-    viewControls.invalidate();
-  };
 
   return (
     <aside className="side-panel-right relative z-20 flex w-[280px] shrink-0 flex-col">
@@ -1009,10 +1008,14 @@ export function Inspector() {
             <div className="px-3.5 pb-1 pt-1">
               <div className="rounded-xl border border-[var(--line)] bg-[var(--card)] p-3">
                 <div className="flex items-center gap-2">
-                  <Sparkles size={13} className="text-[var(--accent-text)]" />
+                  <CircuitBoard size={13} className="text-[var(--accent-text)]" />
                   <div className="text-[12px] font-semibold text-[var(--text-strong)]">
                     {t('inspector.overview')}
                   </div>
+                  <span className="ml-auto flex items-center gap-1.5 text-[10.5px] font-medium text-[var(--text-muted)]">
+                    <span className={`sim-dot ${running ? 'on' : ''}`} />
+                    {running ? t('inspector.running') : t('inspector.paused')}
+                  </span>
                 </div>
                 <div className="mt-2">
                   <div className="stat-row">
@@ -1038,59 +1041,19 @@ export function Inspector() {
                 </div>
               </div>
             </div>
-            <Section title={t('inspector.quickActions')}>
-              <div className="grid grid-cols-2 gap-1.5">
-                <button className="btn btn-soft" onClick={toggleRunning}>
-                  {running ? <Pause size={12.5} /> : <Play size={12.5} />}
-                  {running ? t('common.pause') : t('common.run')}
-                </button>
-                <button className="btn btn-soft" onClick={reset}>
-                  <RotateCcw size={12.5} /> {t('common.reset')}
-                </button>
-                <button className="btn btn-soft" onClick={() => viewControls.fit()}>
-                  <MousePointer2 size={12.5} /> {t('inspector.fit')}
-                </button>
-                <button
-                  className="btn btn-soft"
-                  onClick={() => useEditor.getState().setPaletteOpen(true)}
-                >
-                  <Command size={12.5} /> {t('inspector.command')}
-                </button>
-                <button
-                  className="btn btn-soft"
-                  onClick={() => useEditor.getState().setTruthOpen(true)}
-                >
-                  <Table2 size={12.5} /> {t('sidebar.truthTable')}
-                </button>
-                <button
-                  className="btn btn-soft"
-                  onClick={() => useEditor.getState().setEquationOpen(true)}
-                >
-                  <FunctionSquare size={12.5} /> {t('sidebar.fromEquation')}
-                </button>
+            <Section title={t('inspector.nothingSelected')}>
+              <p className="text-[12px] leading-[1.6] text-[var(--text-secondary)]">
+                {emptyCircuit ? t('inspector.emptyCircuitHint') : t('inspector.nothingSelectedHint')}
+              </p>
+              <div className="mt-2 space-y-0.5 border-t border-[var(--line)] pt-2">
+                <TipRow keys="V W H" label={t('inspector.tipTools')} />
+                <TipRow keys="R" label={t('inspector.tipRotate')} />
+                <TipRow keys="⌘K" label={t('inspector.tipCommands')} />
+                <TipRow keys="?" label={t('inspector.tipShortcuts')} />
               </div>
             </Section>
           </>
         )}
-      </div>
-
-      <div className="shrink-0 border-t border-[var(--line)] p-3">
-        <div className="flex items-center justify-between text-[11px]">
-          <span className="text-[var(--text-muted)]">{t('inspector.simulation')}</span>
-          <span className="flex items-center gap-1.5 text-[var(--text-secondary)]">
-            <span className={`sim-dot ${running ? 'on' : ''}`} />
-            {running ? t('inspector.running') : t('inspector.paused')}
-          </span>
-        </div>
-        <div className="mt-2 grid grid-cols-2 gap-1.5">
-          <button className={`btn ${running ? 'btn-soft' : 'btn-run'}`} onClick={toggleRunning}>
-            {running ? <Pause size={12.5} /> : <Play size={12.5} />}
-            {running ? t('common.pause') : t('common.run')}
-          </button>
-          <button className="btn btn-soft" onClick={reset}>
-            <RotateCcw size={12.5} /> {t('common.reset')}
-          </button>
-        </div>
       </div>
     </aside>
   );

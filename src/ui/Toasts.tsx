@@ -33,7 +33,7 @@ export function Toasts() {
           : 'text-[var(--accent-text)]';
 
   return (
-    <div className="pointer-events-none fixed inset-x-0 bottom-[42px] z-[70] flex justify-center px-4">
+    <div className="pointer-events-none fixed inset-x-0 bottom-[88px] z-[70] flex justify-center px-4">
       <div className="toast pointer-events-auto flex max-w-[560px] items-start gap-2.5 rounded-xl px-3.5 py-2.5">
         <Icon size={14} className={`mt-[1px] shrink-0 ${color}`} />
         <div className="whitespace-pre-wrap text-[12px] leading-[1.5] text-[var(--text)]">{toast.text}</div>

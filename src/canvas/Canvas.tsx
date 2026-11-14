@@ -28,6 +28,7 @@ import {
 } from '../model/geometry';
 import { computeSubLayout } from '../model/hierarchy';
 import { SPEC_BY_KIND, createComp } from '../model/specs';
+import { CanvasEmptyHint, CanvasToolbar } from '../ui/CanvasToolbar';
 
 type Interaction =
   | { mode: 'idle' }
@@ -75,6 +76,10 @@ function clampZoom(z: number): number {
 export default function Canvas() {
   const { t } = useT();
   const canvasTheme = useEditor((s) => s.canvasTheme);
+  const empty = useEditor(
+    (s) =>
+      s.welcomeClosed && !s.pendingKind && s.doc.comps.length === 0 && s.doc.wires.length === 0,
+  );
   const wrapRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const sizeRef = useRef({ w: 0, h: 0 });
@@ -950,6 +955,8 @@ export default function Canvas() {
           (e.currentTarget as HTMLCanvasElement).focus();
         }}
       />
+      <CanvasEmptyHint empty={empty} />
+      <CanvasToolbar />
     </div>
   );
 }

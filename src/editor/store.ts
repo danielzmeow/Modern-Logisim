@@ -358,6 +358,7 @@ export const useEditor = create<EditorState>((set, get) => ({
       future: [],
       selComps: [],
       selWires: [],
+      pendingKind: null,
       welcomeClosed: closed,
     });
     sim.reset();
@@ -387,6 +388,7 @@ export const useEditor = create<EditorState>((set, get) => ({
       future: [],
       selComps: [],
       selWires: [],
+      pendingKind: null,
       welcomeClosed: true,
       running: false,
     });
@@ -405,6 +407,7 @@ export const useEditor = create<EditorState>((set, get) => ({
       future: [],
       selComps: [],
       selWires: [],
+      pendingKind: null,
       welcomeClosed: true,
       running: false,
     });
@@ -500,6 +503,7 @@ export const useEditor = create<EditorState>((set, get) => ({
       future: [],
       selComps: [],
       selWires: [],
+      pendingKind: null,
     });
     sim.reset();
   },

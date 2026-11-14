@@ -76,7 +76,7 @@
   --text-strong: #101622;
   --text-secondary: #4f596c;
   --text-muted: #5f697b;
-  --text-faint: #687183;
+  --text-faint: #626c7e;
   --line: rgba(20, 30, 50, 0.1);
   --line-strong: rgba(20, 30, 50, 0.16);
   --hover: rgba(20, 30, 50, 0.05);
@@ -402,8 +402,9 @@ textarea {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 6px;
-  height: 54px;
+  gap: 5px;
+  height: 62px;
+  padding: 5px 3px;
   border-radius: 9px;
   border: 1px solid transparent;
   color: var(--text-secondary);

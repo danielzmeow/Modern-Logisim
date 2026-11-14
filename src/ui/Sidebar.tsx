@@ -204,7 +204,7 @@ export function Sidebar() {
 
         {groups.map((group) => (
           <div key={group.id} className="mb-1">
-            <div className="flex items-baseline justify-between px-1 pb-1 pt-1.5">
+            <div className="sticky top-0 z-10 -mx-1 flex items-baseline justify-between bg-[var(--surface)] px-1 pb-1 pt-1.5">
               <span className="panel-label">{lang === 'zh' ? group.name : group.nameEn}</span>
               <span className="font-mono text-[11px] text-[var(--text-faint)]">{group.specs.length}</span>
             </div>
@@ -225,8 +225,8 @@ export function Sidebar() {
                     }}
                     onClick={() => setPendingKind(active ? null : spec.kind)}
                   >
-                    <CompIcon kind={spec.kind} size={23} />
-                    <span className="max-w-full overflow-hidden text-ellipsis whitespace-nowrap px-1 text-[12px] font-medium leading-none tracking-[0.005em]">
+                    <CompIcon kind={spec.kind} size={21} />
+                    <span className="line-clamp-2 max-w-full break-words px-1 text-center text-[10.5px] font-medium leading-[1.2] tracking-[0.005em]">
                       {name}
                     </span>
                   </button>
