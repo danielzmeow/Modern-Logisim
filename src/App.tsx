@@ -1,0 +1,186 @@
+import { useEffect, type CSSProperties } from 'react';
+import { useEditor, saveDocToStorage } from './editor/store';
+import { Topbar } from './ui/Topbar';
+import { Sidebar } from './ui/Sidebar';
+import { Canvas } from './ui/CanvasHost';
+import { Inspector } from './ui/Inspector';
+import { StatusBar } from './ui/StatusBar';
+import { CommandPalette } from './ui/CommandPalette';
+import { Shortcuts } from './ui/Shortcuts';
+import { Welcome } from './ui/Welcome';
+import { Toasts } from './ui/Toasts';
+import { ContextMenu } from './ui/ContextMenu';
+import { exportCircFile, openProject, saveProject } from './editor/fileActions';
+import { CircuitBoard, PanelLeft, PanelRight } from 'lucide-react';
+import { useT } from './ui/useT';
+import { useResolvedAppearance } from './ui/useResolvedAppearance';
+import { PALETTES } from './canvas/theme';
+
+export default function App() {
+  const doc = useEditor((s) => s.doc);
+  const sidebar = useEditor((s) => s.sidebar);
+  const inspector = useEditor((s) => s.inspector);
+  const welcomeClosed = useEditor((s) => s.welcomeClosed);
+  const pendingKind = useEditor((s) => s.pendingKind);
+  const canvasTheme = useEditor((s) => s.canvasTheme);
+  const setSidebar = useEditor((s) => s.setSidebar);
+  const setInspector = useEditor((s) => s.setInspector);
+  const markSaved = useEditor((s) => s.markSaved);
+  const lang = useEditor((s) => s.lang);
+  const { t } = useT();
+  const resolvedTheme = useResolvedAppearance();
+
+  const showWelcome = !welcomeClosed && doc.comps.length === 0 && doc.wires.length === 0;
+
+  useEffect(() => {
+    const root = document.documentElement;
+    root.dataset.theme = resolvedTheme;
+    root.dataset.lang = lang;
+    root.lang = lang === 'zh' ? 'zh-CN' : 'en';
+    root.style.colorScheme = resolvedTheme;
+    const meta = document.querySelector('meta[name="theme-color"]');
+    if (meta) meta.setAttribute('content', resolvedTheme === 'dark' ? '#0b0c10' : '#eef0f4');
+  }, [resolvedTheme, lang]);
+
+  useEffect(() => {
+    document.title = `${doc.name || t('doc.untitled')} — Logisim Studio`;
+  }, [doc.name, t]);
+
+  useEffect(() => {
+    const t = window.setTimeout(() => {
+      saveDocToStorage(doc);
+      markSaved();
+    }, 450);
+    return () => window.clearTimeout(t);
+  }, [doc, markSaved]);
+
+  useEffect(() => {
+    const saveNow = () => saveDocToStorage(useEditor.getState().doc);
+    window.addEventListener('beforeunload', saveNow);
+    return () => window.removeEventListener('beforeunload', saveNow);
+  }, []);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null;
+      const typing =
+        !!t &&
+        (t.tagName === 'INPUT' ||
+          t.tagName === 'TEXTAREA' ||
+          t.tagName === 'SELECT' ||
+          t.isContentEditable);
+      const st = useEditor.getState();
+      const meta = e.metaKey || e.ctrlKey;
+      if (e.key === 'Escape') {
+        if (st.paletteOpen) {
+          e.preventDefault();
+          st.setPaletteOpen(false);
+        } else if (st.shortcutsOpen) {
+          e.preventDefault();
+          st.setShortcutsOpen(false);
+        }
+        return;
+      }
+      if (meta) {
+        const k = e.key.toLowerCase();
+        if (k === 'k') {
+          e.preventDefault();
+          if (st.shortcutsOpen) st.setShortcutsOpen(false);
+          st.setPaletteOpen(!st.paletteOpen);
+          return;
+        }
+        if (k === 's') {
+          e.preventDefault();
+          saveProject();
+          return;
+        }
+        if (k === 'o') {
+          e.preventDefault();
+          openProject();
+          return;
+        }
+        if (k === 'e') {
+          e.preventDefault();
+          exportCircFile();
+          return;
+        }
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          st.toggleRunning();
+          return;
+        }
+      }
+      if (typing) return;
+      if (e.key === '?') {
+        e.preventDefault();
+        st.setShortcutsOpen(true);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
+  return (
+    <div className="flex h-[100dvh] flex-col overflow-hidden bg-[var(--app)] text-[var(--text)]">
+      <Topbar />
+      <div className="relative flex min-h-0 flex-1">
+        {sidebar && <Sidebar />}
+        <main className="relative min-w-0 flex-1">
+          <Canvas />
+          {showWelcome && <Welcome />}
+          {!showWelcome && !doc.comps.length && !doc.wires.length && !pendingKind && (
+            <div
+              className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center"
+              style={
+                {
+                  '--empty-text': PALETTES[canvasTheme].text,
+                  '--empty-muted': PALETTES[canvasTheme].muted,
+                  '--empty-chip': PALETTES[canvasTheme].chipFill,
+                  '--empty-line': PALETTES[canvasTheme].dot,
+                } as CSSProperties
+              }
+            >
+              <div className="flex max-w-[320px] flex-col items-center text-center">
+                <span className="mb-3 grid h-9 w-9 place-items-center rounded-xl border border-[var(--empty-line)] bg-[var(--empty-chip)] text-[var(--empty-muted)] shadow-[var(--shadow-card)]">
+                  <CircuitBoard size={17} strokeWidth={1.7} />
+                </span>
+                <div className="text-[12px] font-semibold text-[var(--empty-text)]">
+                  {t('canvas.emptyTitle')}
+                </div>
+                <div className="mt-1 text-[12px] leading-[1.6] text-[var(--empty-muted)]">
+                  {t('canvas.emptyHint')}
+                </div>
+              </div>
+            </div>
+          )}
+          {!sidebar && !showWelcome && (
+            <button
+              className="absolute left-3 top-3 z-30 flex h-7 items-center gap-1.5 rounded-lg border border-[var(--line)] bg-[var(--surface-raised)]/90 px-2.5 text-[11px] font-medium text-[var(--text-secondary)] shadow-[var(--shadow-card)] backdrop-blur transition-colors hover:bg-[var(--card)] hover:text-[var(--text)]"
+              onClick={() => setSidebar(true)}
+              title={t('aria.sidebar')}
+            >
+              <PanelLeft size={12} />
+              {t('sidebar.title')}
+            </button>
+          )}
+          {!inspector && !showWelcome && (
+            <button
+              className="absolute right-3 top-3 z-30 flex h-7 items-center gap-1.5 rounded-lg border border-[var(--line)] bg-[var(--surface-raised)]/90 px-2.5 text-[11px] font-medium text-[var(--text-secondary)] shadow-[var(--shadow-card)] backdrop-blur transition-colors hover:bg-[var(--card)] hover:text-[var(--text)]"
+              onClick={() => setInspector(true)}
+              title={t('aria.inspector')}
+            >
+              {t('inspector.title')}
+              <PanelRight size={12} />
+            </button>
+          )}
+        </main>
+        {inspector && <Inspector />}
+      </div>
+      <StatusBar />
+      <CommandPalette />
+      <Shortcuts />
+      <Toasts />
+      <ContextMenu />
+    </div>
+  );
+}
