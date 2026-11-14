@@ -25,6 +25,8 @@ import {
   MousePointer2,
   Command,
   Sparkles,
+  Table2,
+  FunctionSquare,
 } from 'lucide-react';
 
 function Section({ title, children }: { title: string; children: ReactNode }) {
@@ -250,6 +252,112 @@ function PinValueField({ comp }: { comp: ComponentInstance }) {
   );
 }
 
+function MemoryField({ comp }: { comp: ComponentInstance }) {
+  const { t } = useT();
+  const simTick = useEditor((s) => s.simTick);
+  const addrBits = Math.max(1, Math.min(20, comp.attrs.addrBits ?? 4));
+  const dataBits = Math.max(1, Math.min(32, comp.attrs.dataBits ?? 8));
+  const size = Math.min(256, 2 ** addrBits);
+  const addrDigits = Math.max(1, Math.ceil(addrBits / 4));
+  const dataDigits = Math.max(1, Math.ceil(dataBits / 4));
+  const fmt = (v: number) => (v >>> 0).toString(16).toUpperCase().padStart(dataDigits, '0');
+  const fromValues = (values: number[]) =>
+    Array.from({ length: size }, (_, i) => `${i.toString(16).toUpperCase().padStart(addrDigits, '0')}: ${fmt(values[i] ?? 0)}`).join('\n');
+  const currentValues = () =>
+    sim.netOfPort(comp.id, 'dout') >= 0 ? sim.memoryValues(comp) : comp.attrs.memory ?? [];
+  const [text, setText] = useState(() => fromValues(currentValues()));
+  const [focused, setFocused] = useState(false);
+
+  useEffect(() => {
+    if (!focused) setText(fromValues(currentValues()));
+  }, [comp, comp.id, focused, simTick, addrBits, dataBits, size]);
+
+  const commit = () => {
+    const mask = (2 ** dataBits - 1) >>> 0;
+    const values: number[] = [];
+    let cursor = 0;
+    for (const line of text.split(/\r?\n/)) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      const addressed = trimmed.match(/^([0-9a-fA-F]+)\s*:\s*([0-9a-fA-F]+)/);
+      if (addressed) {
+        const addr = parseInt(addressed[1], 16);
+        const n = parseInt(addressed[2], 16);
+        if (Number.isFinite(addr) && Number.isFinite(n)) values[addr] = n & mask;
+        continue;
+      }
+      for (const token of trimmed.replace(/[;,]/g, ' ').split(/\s+/).filter(Boolean)) {
+        const n = parseInt(token.replace(/^0x/i, ''), 16);
+        values[cursor++] = Number.isFinite(n) ? n & mask : 0;
+      }
+    }
+    const next = Array.from({ length: Math.min(size, Math.max(cursor, values.length)) }, (_, i) => values[i] ?? 0);
+    useEditor.getState().updateComp(comp.id, { memory: next }, `mem:${comp.id}`);
+    sim.loadMemory(comp, next);
+    setText(fromValues(next));
+    viewControls.invalidate();
+  };
+
+  return (
+    <div className="mt-2">
+      <div className="mb-1 flex items-center justify-between">
+        <span className="text-[11px] text-[var(--text-muted)]">{t('inspector.memory')}</span>
+        <span className="font-mono text-[10px] text-[var(--text-faint)]">
+          {t('inspector.memoryCells', { n: 1 << addrBits })}
+        </span>
+      </div>
+      <textarea
+        className="field h-[150px] resize-y py-1.5 font-mono text-[10.5px] leading-[1.55]"
+        value={text}
+        spellCheck={false}
+        onFocus={() => setFocused(true)}
+        onChange={(e) => setText(e.target.value)}
+        onBlur={() => {
+          setFocused(false);
+          commit();
+        }}
+      />
+      <div className="mt-1 text-[11px] leading-[1.45] text-[var(--text-faint)]">
+        {t('inspector.memoryHint')}
+      </div>
+    </div>
+  );
+}
+
+function SubField({ comp }: { comp: ComponentInstance }) {
+  const { t, lang } = useT();
+  const circuits = useEditor((s) => s.circuits);
+  const switchCircuit = useEditor((s) => s.switchCircuit);
+  const target = comp.attrs.circuit ? circuits[comp.attrs.circuit] : undefined;
+  return (
+    <Section title={t('inspector.circuitTarget')}>
+      <Row label={t('inspector.circuitTarget')}>
+        <span className="truncate font-mono text-[11px] text-[var(--text-secondary)]">
+          {target?.name ?? comp.attrs.circuitName ?? '—'}
+        </span>
+      </Row>
+      <Row label={t('inspector.circuitPins')}>
+        <span className="font-mono text-[11px] text-[var(--text-secondary)]">
+          {(comp.attrs.subPins ?? []).length}
+        </span>
+      </Row>
+      {target && (
+        <button
+          className="btn btn-soft mt-2 w-full"
+          onClick={() => switchCircuit(comp.attrs.circuit!)}
+        >
+          {t('inspector.openCircuit')}
+        </button>
+      )}
+      <div className="mt-1.5 text-[12px] leading-4 text-[var(--text-faint)]">
+        {lang === 'zh'
+          ? '子电路符号的引脚来自目标电路的输入/输出引脚。'
+          : 'The symbol pins come from input/output pins in the target circuit.'}
+      </div>
+    </Section>
+  );
+}
+
 const FACING_VALUES: Facing[] = ['east', 'south', 'west', 'north'];
 const FACING_ICONS: Record<Facing, ReactNode> = {
   east: <ArrowRight size={13} />,
@@ -276,7 +384,8 @@ function CompEditor({ comp }: { comp: ComponentInstance }) {
   const bits = Math.max(1, Math.min(32, comp.attrs.bits ?? 1));
   const isPin = comp.kind === 'input' || comp.kind === 'output';
   const isBus = comp.kind === 'split' || comp.kind === 'merge';
-  const isGate = ['and', 'or', 'nand', 'nor', 'xor', 'xnor'].includes(comp.kind);
+  const isGate = ['and', 'or', 'nand', 'nor', 'xor', 'xnor', 'odd', 'even'].includes(comp.kind);
+  const isWidthGate = ['not', 'buffer', 'ctrlBuffer', 'ctrlInverter'].includes(comp.kind);
   const fans = comp.attrs.fans ?? 2;
   const spec = SPEC_BY_KIND[comp.kind];
   const category = categoryName(spec.category, lang);
@@ -342,7 +451,7 @@ function CompEditor({ comp }: { comp: ComponentInstance }) {
         )}
       </Section>
 
-      {(isPin || comp.kind === 'constant' || comp.kind === 'mux') && (
+      {(isPin || comp.kind === 'constant' || comp.kind === 'mux' || comp.kind === 'probe') && (
         <Section title={t('inspector.signal')}>
           <Row label={comp.kind === 'mux' ? t('inspector.dataWidth') : t('inspector.width')}>
             <Num
@@ -384,6 +493,9 @@ function CompEditor({ comp }: { comp: ComponentInstance }) {
 
       {isGate && (
         <Section title={t('inspector.logicGate')}>
+          <Row label={t('inspector.dataWidth')}>
+            <Num value={bits} min={1} max={32} suffix={t('inspector.bit')} onChange={(n) => update(comp.id, { bits: n })} />
+          </Row>
           <Row label={t('inspector.inputCount')}>
             <Segmented
               accent
@@ -472,6 +584,180 @@ function CompEditor({ comp }: { comp: ComponentInstance }) {
         </Section>
       )}
 
+      {(comp.kind === 'output' || comp.kind === 'led' || comp.kind === 'probe' || comp.kind === 'sevenseg') && (
+        <Section title={t('analysis.title')}>
+          <button
+            className="btn btn-soft w-full"
+            onClick={() => useEditor.getState().setTruthOpen(true, comp.id)}
+          >
+            <Sparkles size={12.5} /> {t('inspector.truthTable')}
+          </button>
+          <div className="mt-1.5 text-[12px] leading-4 text-[var(--text-faint)]">
+            {t('analysis.subtitle')}
+          </div>
+        </Section>
+      )}
+
+      {isWidthGate && (
+        <Section title={t('inspector.signal')}>
+          <Row label={t('inspector.dataWidth')}>
+            <Num value={bits} min={1} max={32} suffix={t('inspector.bit')} onChange={(n) => update(comp.id, { bits: n })} />
+          </Row>
+        </Section>
+      )}
+
+      {(comp.kind === 'register' || comp.kind === 'counter') && (
+        <Section title={comp.kind === 'register' ? t('inspector.trigger') : t('inspector.count')}>
+          <Row label={t('inspector.width')}>
+            <Num value={bits} min={1} max={32} suffix={t('inspector.bit')} onChange={(n) => update(comp.id, { bits: n })} />
+          </Row>
+          <Row label={t('inspector.triggerEdge')}>
+            <Segmented
+              accent
+              value={comp.attrs.trigger ?? 'rising'}
+              options={[
+                { value: 'rising' as const, label: t('inspector.rising') },
+                { value: 'falling' as const, label: t('inspector.falling') },
+              ]}
+              onChange={(v) => update(comp.id, { trigger: v })}
+            />
+          </Row>
+          {comp.kind === 'counter' && (
+            <Row label={t('inspector.count')}>
+              <Segmented
+                accent
+                value={comp.attrs.count ?? 'up'}
+                options={[
+                  { value: 'up' as const, label: t('inspector.countUp') },
+                  { value: 'down' as const, label: t('inspector.countDown') },
+                ]}
+                onChange={(v) => update(comp.id, { count: v })}
+              />
+            </Row>
+          )}
+          <Row label={t('inspector.enable')}>
+            <input
+              type="checkbox"
+              checked={comp.attrs.enable !== false}
+              onChange={(e) => update(comp.id, { enable: e.target.checked })}
+            />
+          </Row>
+          <Row label={t('inspector.reset')}>
+            <input
+              type="checkbox"
+              checked={comp.attrs.reset !== false}
+              onChange={(e) => update(comp.id, { reset: e.target.checked })}
+            />
+          </Row>
+          <div className="mt-1.5 font-mono text-[12px] text-[var(--text-faint)]">
+            Q = {comp.kind === 'counter' ? sim.valueOfPort(comp.id, 'q').value : sim.valueOfPort(comp.id, 'q').value}
+          </div>
+        </Section>
+      )}
+
+      {(comp.kind === 'ram' || comp.kind === 'rom') && (
+        <Section title={t('inspector.memory')}>
+          <Row label={t('inspector.addrBits')}>
+            <Num value={comp.attrs.addrBits ?? 4} min={1} max={16} suffix={t('inspector.bit')} onChange={(n) => update(comp.id, { addrBits: n })} />
+          </Row>
+          <Row label={t('inspector.dataBits')}>
+            <Num value={comp.attrs.dataBits ?? 8} min={1} max={32} suffix={t('inspector.bit')} onChange={(n) => update(comp.id, { dataBits: n })} />
+          </Row>
+          <MemoryField comp={comp} />
+        </Section>
+      )}
+
+      {(comp.kind === 'adder' || comp.kind === 'subtractor' || comp.kind === 'multiplier' || comp.kind === 'comparator') && (
+        <Section title={t('inspector.signal')}>
+          <Row label={t('inspector.dataWidth')}>
+            <Num value={bits} min={1} max={32} suffix={t('inspector.bit')} onChange={(n) => update(comp.id, { bits: n })} />
+          </Row>
+        </Section>
+      )}
+
+      {comp.kind === 'shifter' && (
+        <Section title={t('inspector.signal')}>
+          <Row label={t('inspector.dataWidth')}>
+            <Num value={bits} min={1} max={32} suffix={t('inspector.bit')} onChange={(n) => update(comp.id, { bits: n })} />
+          </Row>
+          <Row label={t('inspector.shift')}>
+            <Segmented
+              accent
+              value={comp.attrs.shift ?? 'left'}
+              options={[
+                { value: 'left' as const, label: t('inspector.shiftLeft') },
+                { value: 'right' as const, label: t('inspector.shiftRight') },
+                { value: 'arithmetic' as const, label: t('inspector.shiftArithmetic') },
+              ]}
+              onChange={(v) => update(comp.id, { shift: v })}
+            />
+          </Row>
+        </Section>
+      )}
+
+      {(comp.kind === 'decoder' || comp.kind === 'demux' || comp.kind === 'priority' || comp.kind === 'bitSelect') && (
+        <Section title={t('inspector.selectBits')}>
+          <Row label={t('inspector.selectBits')}>
+            <Segmented
+              accent
+              value={comp.attrs.fans ?? 1}
+              options={[1, 2, 3, 4].map((n) => ({ value: n, label: n }))}
+              onChange={(n) => update(comp.id, { fans: n })}
+            />
+          </Row>
+          {(comp.kind === 'demux' || comp.kind === 'bitSelect') && (
+            <Row label={t('inspector.dataWidth')}>
+              <Num value={bits} min={1} max={32} suffix={t('inspector.bit')} onChange={(n) => update(comp.id, { bits: n })} />
+            </Row>
+          )}
+          {comp.kind === 'decoder' && (
+            <Row label={t('inspector.enable')}>
+              <input
+                type="checkbox"
+                checked={!!comp.attrs.enable}
+                onChange={(e) => update(comp.id, { enable: e.target.checked })}
+              />
+            </Row>
+          )}
+        </Section>
+      )}
+
+      {comp.kind === 'extend' && (
+        <Section title={t('inspector.signal')}>
+          <Row label={t('inspector.inBits')}>
+            <Num value={comp.attrs.inBits ?? 4} min={1} max={32} suffix={t('inspector.bit')} onChange={(n) => update(comp.id, { inBits: n })} />
+          </Row>
+          <Row label={t('inspector.outBits')}>
+            <Num value={comp.attrs.outBits ?? 8} min={1} max={32} suffix={t('inspector.bit')} onChange={(n) => update(comp.id, { outBits: n })} />
+          </Row>
+          <Row label={t('inspector.signExtend')}>
+            <input
+              type="checkbox"
+              checked={!!comp.attrs.sign}
+              onChange={(e) => update(comp.id, { sign: e.target.checked })}
+            />
+          </Row>
+        </Section>
+      )}
+
+      {comp.kind === 'pull' && (
+        <Section title={t('inspector.pull')}>
+          <Row label={t('inspector.pull')}>
+            <Segmented
+              accent
+              value={String(comp.attrs.pull ?? 0)}
+              options={[
+                { value: '1', label: t('inspector.pullUp') },
+                { value: '0', label: t('inspector.pullDown') },
+              ]}
+              onChange={(v) => update(comp.id, { pull: v === '1' ? 1 : 0 })}
+            />
+          </Row>
+        </Section>
+      )}
+
+      {comp.kind === 'sub' && <SubField comp={comp} />}
+
       {isBus && (
         <Section title={t('inspector.bus')}>
           <Row label={t('inspector.busWidth')}>
@@ -481,7 +767,7 @@ function CompEditor({ comp }: { comp: ComponentInstance }) {
             <Num
               value={fans}
               min={2}
-              max={8}
+              max={12}
               suffix={lang === 'zh' ? '路' : ''}
               onChange={(n) => update(comp.id, { fans: n })}
             />
@@ -636,9 +922,36 @@ function WireEditor({ count }: { count: number }) {
         </Section>
       )}
       <Section title={t('inspector.actions')}>
-        <button className="btn btn-soft btn-danger w-full" onClick={remove}>
-          <Trash2 size={12.5} /> {t('inspector.deleteWire')}
-        </button>
+        <div className="grid gap-1.5">
+          <button className="btn btn-soft btn-danger" onClick={remove}>
+            <Trash2 size={12.5} /> {t('inspector.deleteSegment')}
+          </button>
+          <button
+            className="btn btn-soft"
+            onClick={() => {
+              const first = useEditor.getState().selWires[0];
+              if (first) {
+                useEditor.getState().selectWireNet(first);
+                viewControls.invalidate();
+              }
+            }}
+          >
+            {t('inspector.selectNet')}
+          </button>
+          <button
+            className="btn btn-soft btn-danger"
+            onClick={() => {
+              const st = useEditor.getState();
+              const first = st.selWires[0];
+              if (!first) return;
+              st.selectWireNet(first);
+              st.deleteSelection();
+              viewControls.invalidate();
+            }}
+          >
+            <Trash2 size={12.5} /> {t('inspector.deleteNet')}
+          </button>
+        </div>
         <div className="mt-2.5 text-[12px] leading-4 text-[var(--text-faint)]">{t('inspector.wireHint')}</div>
       </Section>
     </>
@@ -742,6 +1055,18 @@ export function Inspector() {
                   onClick={() => useEditor.getState().setPaletteOpen(true)}
                 >
                   <Command size={12.5} /> {t('inspector.command')}
+                </button>
+                <button
+                  className="btn btn-soft"
+                  onClick={() => useEditor.getState().setTruthOpen(true)}
+                >
+                  <Table2 size={12.5} /> {t('sidebar.truthTable')}
+                </button>
+                <button
+                  className="btn btn-soft"
+                  onClick={() => useEditor.getState().setEquationOpen(true)}
+                >
+                  <FunctionSquare size={12.5} /> {t('sidebar.fromEquation')}
                 </button>
               </div>
             </Section>

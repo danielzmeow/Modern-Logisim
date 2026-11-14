@@ -1,0 +1,204 @@
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEditor } from '../editor/store';
+import { useT } from './useT';
+import { useFocusTrap } from './useFocusTrap';
+import { buildTruthTable, formatCell, truthTableCsv } from '../analysis/truthTable';
+import { ClipboardCopy, Hash, X } from 'lucide-react';
+
+export function TruthTable() {
+  const open = useEditor((s) => s.truthOpen);
+  const focus = useEditor((s) => s.truthFocus);
+  const setOpen = useEditor((s) => s.setTruthOpen);
+  const doc = useEditor((s) => s.doc);
+  const circuits = useEditor((s) => s.circuits);
+  const { t, lang } = useT();
+  const panelRef = useRef<HTMLDivElement>(null);
+  const [copied, setCopied] = useState(false);
+  useFocusTrap(panelRef, open);
+
+  const table = useMemo(() => {
+    if (!open) return null;
+    try {
+      return buildTruthTable(doc, circuits);
+    } catch (err) {
+      console.error(err);
+      return null;
+    }
+  }, [open, doc, circuits]);
+
+  useEffect(() => {
+    if (!open) return;
+    setCopied(false);
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpen(false);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [open, setOpen]);
+
+  if (!open) return null;
+
+  const copy = async () => {
+    if (!table) return;
+    try {
+      await navigator.clipboard.writeText(truthTableCsv(table));
+      setCopied(true);
+      useEditor.getState().toastMsg(t('analysis.copied'), 'success');
+    } catch {
+      useEditor.getState().toastMsg(t('analysis.failed'), 'error');
+    }
+  };
+
+  const empty = !table || !table.outputs.length || (!table.inputs.length && !table.outputs.length);
+
+  return (
+    <div
+      className="modal-backdrop flex items-start justify-center overflow-y-auto px-6 py-[6vh]"
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget) setOpen(false);
+      }}
+    >
+      <div
+        ref={panelRef}
+        className="modal-panel flex max-h-[86vh] w-full max-w-[900px] flex-col overflow-hidden"
+        role="dialog"
+        aria-modal="true"
+        aria-label={t('analysis.title')}
+      >
+        <div className="flex shrink-0 items-center justify-between border-b border-[var(--line)] px-5 py-3.5">
+          <div className="flex items-center gap-2.5">
+            <span className="grid h-7 w-7 place-items-center rounded-md border border-[var(--line)] bg-[var(--field)] text-[var(--text-secondary)]">
+              <Hash size={14} />
+            </span>
+            <div>
+              <div className="text-[13px] font-semibold text-[var(--text-strong)]">{t('analysis.title')}</div>
+              <div className="text-[11px] text-[var(--text-muted)]">
+                {doc.name} · {t('analysis.subtitle')}
+              </div>
+            </div>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <button className="btn btn-soft !h-7 !text-[11px]" onClick={copy} disabled={!table || empty}>
+              <ClipboardCopy size={12} /> {copied ? '✓' : t('analysis.copyCsv')}
+            </button>
+            <button
+              autoFocus
+              className="icon-btn !h-7 !w-7"
+              onClick={() => setOpen(false)}
+              title={t('analysis.close')}
+              aria-label={t('common.close')}
+            >
+              <X size={14} />
+            </button>
+          </div>
+        </div>
+
+        <div className="scroll-thin min-h-0 flex-1 overflow-auto">
+          {empty ? (
+            <div className="px-6 py-14 text-center text-[12px] text-[var(--text-muted)]">
+              {table && !table.outputs.length ? t('analysis.noOutputs') : t('analysis.empty')}
+            </div>
+          ) : (
+            <table className="w-full border-collapse text-[11.5px]">
+              <thead className="sticky top-0 z-10 bg-[var(--surface-raised)] shadow-[0_1px_0_var(--line)]">
+                <tr>
+                  {table!.inputs.map((input) => (
+                    <th
+                      key={`in-${input.comp.id}`}
+                      className="border-r border-[var(--line)] px-2.5 py-2 text-left font-semibold text-[var(--text-secondary)] last:border-r-0"
+                    >
+                      <span className="flex items-center gap-1.5">
+                        {input.label}
+                        <span className="font-mono text-[10px] font-normal text-[var(--text-faint)]">
+                          {input.bits}b
+                        </span>
+                      </span>
+                    </th>
+                  ))}
+                  {table!.outputs.map((output) => {
+                    const active = output.comp.id === focus;
+                    return (
+                      <th
+                        key={`out-${output.comp.id}`}
+                        title={t('analysis.focus', { name: output.label })}
+                        className={`border-l border-[var(--line)] px-2.5 py-2 text-left font-semibold ${
+                          active
+                            ? 'bg-[var(--accent-soft)] text-[var(--accent-text)]'
+                            : 'text-[var(--text-secondary)]'
+                        }`}
+                      >
+                        <span className="flex items-center gap-1.5">
+                          {output.label}
+                          <span className="font-mono text-[10px] font-normal text-[var(--text-faint)]">
+                            {output.bits}b
+                          </span>
+                        </span>
+                      </th>
+                    );
+                  })}
+                </tr>
+              </thead>
+              <tbody>
+                {table!.rows.map((row, ri) => (
+                  <tr key={ri} className="border-t border-[var(--line)] hover:bg-[var(--hover)]">
+                    {row.inputs.map((value, i) => (
+                      <td
+                        key={`i-${ri}-${i}`}
+                        className="border-r border-[var(--line)] px-2.5 py-1.5 font-mono tabular-nums text-[var(--text)] last:border-r-0"
+                      >
+                        {formatCell(value, table!.inputs[i].bits)}
+                      </td>
+                    ))}
+                    {row.outputs.map((output, i) => {
+                      const active = table!.outputs[i].comp.id === focus;
+                      const text =
+                        output.state === 'e'
+                          ? 'E'
+                          : output.state === 'z'
+                            ? 'Z'
+                            : formatCell(output.value, table!.outputs[i].bits);
+                      return (
+                        <td
+                          key={`o-${ri}-${i}`}
+                          className={`border-l border-[var(--line)] px-2.5 py-1.5 font-mono tabular-nums ${
+                            active
+                              ? 'bg-[var(--accent-soft)] font-semibold text-[var(--accent-text)]'
+                              : output.state === 'e'
+                                ? 'text-[var(--danger-text)]'
+                                : output.state === 'z'
+                                  ? 'text-[var(--text-faint)]'
+                                  : output.value
+                                    ? 'text-[var(--success-text)]'
+                                    : 'text-[var(--text-muted)]'
+                          }`}
+                        >
+                          {text}
+                        </td>
+                      );
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+
+        <div className="flex shrink-0 flex-wrap items-center gap-x-4 gap-y-1 border-t border-[var(--line)] px-4 py-2 text-[11px] text-[var(--text-faint)]">
+          <span>
+            {t('analysis.inputs')} {table?.inputs.length ?? 0} · {t('analysis.outputs')}{' '}
+            {table?.outputs.length ?? 0} · {t('analysis.rows', { n: table?.rows.length ?? 0 })}
+          </span>
+          {table?.sequential && (
+            <span className="text-[var(--warning-text)]">{t('analysis.sequential')}</span>
+          )}
+          {table?.truncated && (
+            <span className="text-[var(--warning-text)]">
+              {t('analysis.tooMany', { n: table.maxRows })}
+            </span>
+          )}
+          <span className="ml-auto">{lang === 'zh' ? 'E = 冲突 / Z = 高阻' : 'E = conflict / Z = high-Z'}</span>
+        </div>
+      </div>
+    </div>
+  );
+}

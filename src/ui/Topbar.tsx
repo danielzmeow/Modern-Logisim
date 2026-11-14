@@ -1,6 +1,6 @@
 import { useEditor } from '../editor/store';
 import { LogoMark } from './icons';
-import { exportCircFile, newCircuit, openProject } from '../editor/fileActions';
+import { exportCircFile, newCircuit, openProject, saveProject } from '../editor/fileActions';
 import { sim } from '../model/sim';
 import { viewControls } from '../canvas/view';
 import { useT } from './useT';
@@ -12,6 +12,7 @@ import {
   Play,
   Redo2,
   RotateCcw,
+  Save,
   Search,
   Undo2,
 } from 'lucide-react';
@@ -93,6 +94,9 @@ export function Topbar() {
         </button>
         <button className="icon-btn hidden md:inline-flex" title={t('topbar.open')} onClick={openProject}>
           <FolderOpen size={15.5} strokeWidth={1.8} />
+        </button>
+        <button className="icon-btn hidden md:inline-flex" title={t('topbar.save')} onClick={saveProject}>
+          <Save size={15.5} strokeWidth={1.8} />
         </button>
         <button className="icon-btn hidden md:inline-flex" title={t('topbar.export')} onClick={exportCircFile}>
           <Download size={15.5} strokeWidth={1.8} />

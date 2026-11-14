@@ -15,7 +15,11 @@ import {
   RotateCcw,
   RotateCw,
   Scan,
+  Scissors,
   SlidersHorizontal,
+  Table2,
+  FunctionSquare,
+  Network,
   Trash2,
   Undo2,
   Redo2,
@@ -140,6 +144,16 @@ export function ContextMenu() {
                 }}
               />
             )}
+            {(first?.kind === 'output' || first?.kind === 'led' || first?.kind === 'probe') && (
+              <Item
+                icon={Table2}
+                label={t('menu.truthTable')}
+                onClick={() => {
+                  st().setTruthOpen(true, first!.id);
+                  close();
+                }}
+              />
+            )}
             <Item
               icon={SlidersHorizontal}
               label={t('menu.editInspector')}
@@ -199,11 +213,43 @@ export function ContextMenu() {
           <>
             <Item
               icon={Trash2}
-              label={t('menu.deleteNet')}
+              label={t('menu.deleteSegment')}
               shortcut="⌫"
               danger
               onClick={() => {
                 st().deleteSelection();
+                close();
+                viewControls.invalidate();
+              }}
+            />
+            <Item
+              icon={Network}
+              label={t('menu.selectNet')}
+              onClick={() => {
+                if (menu.wireId) st().selectWireNet(menu.wireId);
+                close();
+                viewControls.invalidate();
+              }}
+            />
+            <Item
+              icon={Trash2}
+              label={t('menu.deleteNet')}
+              danger
+              onClick={() => {
+                const state = st();
+                if (menu.wireId) state.selectWireNet(menu.wireId);
+                state.deleteSelection();
+                close();
+                viewControls.invalidate();
+              }}
+            />
+            <div className="my-1 h-px bg-[var(--line)]" />
+            <Item
+              icon={Scissors}
+              label={t('menu.splitWire')}
+              disabled={!menu.wireId || !menu.world}
+              onClick={() => {
+                if (menu.wireId && menu.world) st().splitWire(menu.wireId, menu.world);
                 close();
                 viewControls.invalidate();
               }}
@@ -290,6 +336,23 @@ export function ContextMenu() {
                 st().setShowGrid(!st().showGrid);
                 close();
                 viewControls.invalidate();
+              }}
+            />
+            <div className="my-1 h-px bg-[var(--line)]" />
+            <Item
+              icon={Table2}
+              label={t('menu.truthTable')}
+              onClick={() => {
+                st().setTruthOpen(true);
+                close();
+              }}
+            />
+            <Item
+              icon={FunctionSquare}
+              label={t('menu.fromEquation')}
+              onClick={() => {
+                st().setEquationOpen(true);
+                close();
               }}
             />
             <Item

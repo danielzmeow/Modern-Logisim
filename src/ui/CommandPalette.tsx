@@ -9,8 +9,12 @@ import { sim } from '../model/sim';
 import { useT } from './useT';
 import { useFocusTrap } from './useFocusTrap';
 import {
+  Boxes,
   CheckSquare,
   Copy,
+  FunctionSquare,
+  Plus,
+  Table2,
   Download,
   FilePlus2,
   FolderOpen,
@@ -335,6 +339,42 @@ export function CommandPalette() {
         run: closeThen(newCircuit),
       },
       {
+        id: 'truth-table',
+        group: t('palette.group.sim'),
+        label: t('analysis.truth'),
+        sub: t('analysis.subtitle'),
+        keywords: 'truth table 真值表 分析 输出',
+        icon: iconWrap(Table2, 'var(--accent-text)'),
+        run: closeThen(() => st().setTruthOpen(true)),
+      },
+      {
+        id: 'equations',
+        group: t('palette.group.edit'),
+        label: t('equations.title'),
+        sub: t('equations.subtitle'),
+        keywords: 'equation expression generator 方程 表达式 生成 电路',
+        icon: iconWrap(FunctionSquare, 'var(--accent-text)'),
+        run: closeThen(() => st().setEquationOpen(true)),
+      },
+      {
+        id: 'new-subcircuit',
+        group: t('palette.group.file'),
+        label: t('circuit.new'),
+        sub: t('circuit.add'),
+        keywords: 'circuit subcircuit module 电路 子电路 新建',
+        icon: iconWrap(Plus, 'var(--text-muted)'),
+        run: closeThen(() => {
+          const state = useEditor.getState();
+          const ids = new Set(Object.values(state.circuits).map((d) => d.name));
+          let n = state.circuitOrder.length + 1;
+          let name = `${t('circuit.new')} ${n}`;
+          while (ids.has(name)) name = `${t('circuit.new')} ${++n}`;
+          const id = state.createCircuit(name);
+          state.switchCircuit(id);
+          setTimeout(() => viewControls.reset(), 20);
+        }),
+      },
+      {
         id: 'shortcuts',
         group: t('palette.group.help'),
         label: t('palette.shortcuts'),
@@ -362,7 +402,7 @@ export function CommandPalette() {
 
   const items = useMemo(() => {
     const q = query.trim();
-    const comps: Item[] = SPECS.map((s) => ({
+    const comps: Item[] = SPECS.filter((s) => s.kind !== 'sub').map((s) => ({
       id: `comp:${s.kind}`,
       group: t('palette.group.components'),
       label: t('palette.place', { name: specName(s.kind, lang) }),

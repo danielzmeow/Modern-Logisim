@@ -162,6 +162,146 @@ export function CompIcon({ kind, size = 24 }: { kind: CompKind; size?: number })
           <path d="M10 19.5v2" opacity="0.7" />
         </svg>
       );
+    case 'buffer':
+      return (
+        <svg {...common}>
+          <path d="M2 12h5M20 12h2" />
+          <path d="M7 6.5 18 12 7 17.5V6.5Z" />
+        </svg>
+      );
+    case 'odd':
+    case 'even':
+      return (
+        <svg {...common}>
+          <path d="M2 7h4M2 17h4M2 12h4" />
+          <path d="M6 4.5h3.5L18 12l-8.5 7.5H6V4.5Z" />
+          <path d="M6 4.5c2 2 3 4.5 3 7.5s-1 5.5-3 7.5" strokeWidth="1.2" />
+          <path d="M20 12h2" />
+        </svg>
+      );
+    case 'ctrlBuffer':
+    case 'ctrlInverter':
+      return (
+        <svg {...common}>
+          <path d="M2 11h4M2 17h4M14 11h8" />
+          <path d="M6 6.5 14 11l-8 4.5V6.5Z" />
+          {kind === 'ctrlInverter' && <circle cx="15.5" cy="11" r="1.6" />}
+        </svg>
+      );
+    case 'probe':
+      return (
+        <svg {...common}>
+          <path d="M2 12h4" />
+          <rect x="6" y="7.5" width="14" height="9" rx="2" />
+          <path d="M10 12h6" strokeWidth="1.2" />
+          <circle cx="13" cy="12" r="1.2" fill="currentColor" stroke="none" />
+        </svg>
+      );
+    case 'power':
+      return (
+        <svg {...common}>
+          <path d="M12 21V10M6 10h12" strokeWidth="1.8" />
+          <path d="M9 4.5 12 7l3-2.5" opacity="0.6" />
+        </svg>
+      );
+    case 'ground':
+      return (
+        <svg {...common}>
+          <path d="M12 3v8M5 11h14M7.5 15h9M10 19h4" strokeWidth="1.6" />
+        </svg>
+      );
+    case 'pull':
+      return (
+        <svg {...common}>
+          <path d="M2 12h5M13 12h9" />
+          <rect x="7" y="6.5" width="6" height="11" rx="1.5" />
+          <path d="M10 15V9M8.4 10.6 10 9l1.6 1.6" strokeWidth="1.3" />
+        </svg>
+      );
+    case 'extend':
+      return (
+        <svg {...common}>
+          <path d="M2 8h5M2 16h5M13 8h9M13 16h9M7 8h6v8H7z" />
+          <path d="M11 12h2" strokeWidth="1.2" />
+        </svg>
+      );
+    case 'register':
+      return (
+        <svg {...common}>
+          <rect x="4.5" y="4.5" width="15" height="15" rx="2" />
+          <path d="M1.5 8h3M1.5 16h3M19.5 8h3M19.5 13h3" />
+          <path d="M4.5 15.5 7 17.5 4.5 19.5V15.5Z" strokeWidth="1.1" />
+        </svg>
+      );
+    case 'counter':
+      return (
+        <svg {...common}>
+          <rect x="4.5" y="5.5" width="15" height="13" rx="2" />
+          <path d="M1.5 9h3M1.5 15h3M19.5 9h3" />
+          <path d="M8 12h5M8 9h4M8 15h6" strokeWidth="1.2" />
+        </svg>
+      );
+    case 'ram':
+    case 'rom':
+      return (
+        <svg {...common}>
+          <rect x="4" y="4.5" width="16" height="15" rx="2" />
+          <path d="M1 8h3M1 16h3M20 8h3M20 16h3" />
+          <path d="M8 8.5h8M8 12h8M8 15.5h5" strokeWidth="1.1" />
+        </svg>
+      );
+    case 'decoder':
+    case 'demux':
+      return (
+        <svg {...common}>
+          <path d="M2 8h4M2 16h4M2 12h4" />
+          <path d="M6 5.5h3.5L17 8v8l-7.5 2.5H6V5.5Z" />
+          <path d="M17 7h5M17 10h5M17 14h5M17 17h5" />
+        </svg>
+      );
+    case 'priority':
+      return (
+        <svg {...common}>
+          <path d="M2 7h4M2 11h4M2 15h4M2 18h4" />
+          <path d="M6 4.5h4L18 12l-8 7.5H6V4.5Z" />
+          <path d="M18 12h4" />
+        </svg>
+      );
+    case 'bitSelect':
+      return (
+        <svg {...common}>
+          <path d="M2 9h4M2 15h4M19 12h3" />
+          <path d="M6 6.5h4L17 9v6l-7 2.5H6V6.5Z" />
+          <path d="M10 19.5v1.5" />
+        </svg>
+      );
+    case 'adder':
+    case 'subtractor':
+    case 'multiplier':
+    case 'comparator':
+    case 'shifter':
+      return (
+        <svg {...common}>
+          <rect x="4" y="4.5" width="16" height="15" rx="2" />
+          <path d="M1 8h3M1 16h3M20 9h3M20 15h3" />
+          <path d="M8 12h8M12 8v8" strokeWidth="1.2" />
+        </svg>
+      );
+    case 'sevenseg':
+      return (
+        <svg {...common}>
+          <rect x="4" y="2.5" width="16" height="19" rx="2" />
+          <path d="M8 7h8M8 12h8M8 17h8M8.5 7v5M15.5 7v5M8.5 12v5M15.5 12v5" strokeWidth="1.2" />
+        </svg>
+      );
+    case 'sub':
+      return (
+        <svg {...common}>
+          <rect x="3.5" y="4.5" width="17" height="15" rx="2" />
+          <path d="M1 8h2.5M1 16h2.5M20.5 8H23M20.5 16H23" />
+          <path d="M8 9h8M8 12h5M8 15h7" strokeWidth="1.1" />
+        </svg>
+      );
     case 'text':
       return (
         <svg {...common}>

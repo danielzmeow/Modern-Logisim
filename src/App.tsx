@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { useEditor, saveDocToStorage } from './editor/store';
+import { useEditor, saveProjectToStorage } from './editor/store';
 import { Topbar } from './ui/Topbar';
 import { Sidebar } from './ui/Sidebar';
 import { Canvas } from './ui/CanvasHost';
@@ -10,6 +10,8 @@ import { Shortcuts } from './ui/Shortcuts';
 import { Welcome } from './ui/Welcome';
 import { Toasts } from './ui/Toasts';
 import { ContextMenu } from './ui/ContextMenu';
+import { TruthTable } from './ui/TruthTable';
+import { EquationDialog } from './ui/EquationDialog';
 import { exportCircFile, openProject, saveProject } from './editor/fileActions';
 import { PanelLeft, PanelRight } from 'lucide-react';
 import { useT } from './ui/useT';
@@ -17,6 +19,8 @@ import { useResolvedAppearance } from './ui/useResolvedAppearance';
 
 export default function App() {
   const doc = useEditor((s) => s.doc);
+  const circuits = useEditor((s) => s.circuits);
+  const circuitOrder = useEditor((s) => s.circuitOrder);
   const sidebar = useEditor((s) => s.sidebar);
   const inspector = useEditor((s) => s.inspector);
   const welcomeClosed = useEditor((s) => s.welcomeClosed);
@@ -45,14 +49,14 @@ export default function App() {
 
   useEffect(() => {
     const t = window.setTimeout(() => {
-      saveDocToStorage(doc);
+      saveProjectToStorage(useEditor.getState().snapshotProject());
       markSaved();
     }, 450);
     return () => window.clearTimeout(t);
-  }, [doc, markSaved]);
+  }, [doc, circuits, circuitOrder, markSaved]);
 
   useEffect(() => {
-    const saveNow = () => saveDocToStorage(useEditor.getState().doc);
+    const saveNow = () => saveProjectToStorage(useEditor.getState().snapshotProject());
     window.addEventListener('beforeunload', saveNow);
     return () => window.removeEventListener('beforeunload', saveNow);
   }, []);
@@ -153,6 +157,8 @@ export default function App() {
       <Shortcuts />
       <Toasts />
       <ContextMenu />
+      <TruthTable />
+      <EquationDialog />
     </div>
   );
 }
