@@ -100,15 +100,16 @@ export function geom(comp: ComponentInstance): Geom {
   const bits = Math.max(1, Math.min(32, comp.attrs.bits ?? 1));
 
   if (isGate(k)) {
-    if (k === 'not') {
+    const gateBits = Math.max(1, Math.min(32, comp.attrs.bits ?? 1));
+    if (k === 'not' || k === 'buffer') {
       return {
         x: -30,
         y: -10,
         w: 30,
         h: 20,
         ports: [
-          { name: 'in', local: { x: -30, y: 0 }, dir: 'in', bits: 1 },
-          { name: 'out', local: { x: 0, y: 0 }, dir: 'out', bits: 1 },
+          { name: 'in', local: { x: -30, y: 0 }, dir: 'in', bits: gateBits },
+          { name: 'out', local: { x: 0, y: 0 }, dir: 'out', bits: gateBits },
         ],
       };
     }
@@ -117,13 +118,14 @@ export function geom(comp: ComponentInstance): Geom {
     const w = size + (hasOutputBubble(k) ? 10 : 0);
     const h = Math.max(10 * n, size);
     const ys = gateInputOffsets(n, size);
+    const outputBits = k === 'odd' || k === 'even' ? 1 : gateBits;
     const ports: PortGeom[] = ys.map((y, i) => ({
       name: `in${i}`,
       local: { x: -w, y },
       dir: 'in' as const,
-      bits: 1,
+      bits: gateBits,
     }));
-    ports.push({ name: 'out', local: { x: 0, y: 0 }, dir: 'out', bits: 1 });
+    ports.push({ name: 'out', local: { x: 0, y: 0 }, dir: 'out', bits: outputBits });
     return { x: -w, y: -h / 2, w, h, ports };
   }
 
@@ -175,6 +177,63 @@ export function geom(comp: ComponentInstance): Geom {
         ports: [{ name: 'in', local: { x: 0, y: 0 }, dir: 'in', bits: 1 }],
       };
     }
+    case 'probe': {
+      const w = pinWidth(bits);
+      return {
+        x: 0,
+        y: -10,
+        w,
+        h: 20,
+        ports: [{ name: 'in', local: { x: 0, y: 0 }, dir: 'in', bits }],
+      };
+    }
+    case 'power':
+    case 'ground': {
+      return {
+        x: 0,
+        y: -20,
+        w: 20,
+        h: 20,
+        ports: [{ name: 'out', local: { x: 0, y: 0 }, dir: 'out', bits: 1 }],
+      };
+    }
+    case 'pull': {
+      return {
+        x: 0,
+        y: -12,
+        w: 26,
+        h: 24,
+        ports: [{ name: 'net', local: { x: 0, y: 0 }, dir: 'inout', bits: 1 }],
+      };
+    }
+    case 'extend': {
+      const inBits = Math.max(1, Math.min(32, comp.attrs.inBits ?? 4));
+      const outBits = Math.max(1, Math.min(32, comp.attrs.outBits ?? 8));
+      return {
+        x: -30,
+        y: -10,
+        w: 30,
+        h: 20,
+        ports: [
+          { name: 'in', local: { x: -30, y: 0 }, dir: 'in', bits: inBits },
+          { name: 'out', local: { x: 0, y: 0 }, dir: 'out', bits: outBits },
+        ],
+      };
+    }
+    case 'ctrlBuffer':
+    case 'ctrlInverter': {
+      return {
+        x: -40,
+        y: -22,
+        w: 40,
+        h: 44,
+        ports: [
+          { name: 'in', local: { x: -40, y: -6 }, dir: 'in', bits },
+          { name: 'enable', local: { x: -40, y: 12 }, dir: 'in', bits: 1, label: 'EN' },
+          { name: 'out', local: { x: 0, y: 0 }, dir: 'out', bits },
+        ],
+      };
+    }
     case 'dff': {
       return {
         x: -40,
@@ -186,6 +245,67 @@ export function geom(comp: ComponentInstance): Geom {
           { name: 'clk', local: { x: -40, y: 20 }, dir: 'in', bits: 1, label: '›' },
           { name: 'q', local: { x: 0, y: 0 }, dir: 'out', bits: 1, label: 'Q' },
           { name: 'qn', local: { x: 0, y: 20 }, dir: 'out', bits: 1, label: 'Q̄' },
+        ],
+      };
+    }
+    case 'register': {
+      const bits = Math.max(1, Math.min(32, comp.attrs.bits ?? 8));
+      const ports: PortGeom[] = [
+        { name: 'd', local: { x: -50, y: 0 }, dir: 'in', bits, label: 'D' },
+        { name: 'clk', local: { x: -40, y: 30 }, dir: 'in', bits: 1, label: '›' },
+        { name: 'q', local: { x: 0, y: 0 }, dir: 'out', bits, label: 'Q' },
+      ];
+      if (comp.attrs.enable !== false) {
+        ports.push({ name: 'enable', local: { x: -15, y: 30 }, dir: 'in', bits: 1, label: 'EN' });
+      }
+      if (comp.attrs.reset !== false) {
+        ports.push({ name: 'reset', local: { x: 10, y: 30 }, dir: 'in', bits: 1, label: 'R' });
+      }
+      return { x: -50, y: -30, w: 50, h: 60, ports };
+    }
+    case 'counter': {
+      const bits = Math.max(1, Math.min(32, comp.attrs.bits ?? 8));
+      const ports: PortGeom[] = [
+        { name: 'clk', local: { x: -50, y: -10 }, dir: 'in', bits: 1, label: '›' },
+        { name: 'q', local: { x: 0, y: -10 }, dir: 'out', bits, label: 'Q' },
+        { name: 'carry', local: { x: 0, y: 10 }, dir: 'out', bits: 1, label: 'C' },
+      ];
+      if (comp.attrs.reset !== false) {
+        ports.push({ name: 'reset', local: { x: -50, y: 10 }, dir: 'in', bits: 1, label: 'R' });
+      }
+      if (comp.attrs.enable !== false) {
+        ports.push({ name: 'enable', local: { x: -30, y: 20 }, dir: 'in', bits: 1, label: 'EN' });
+      }
+      return { x: -50, y: -20, w: 50, h: 40, ports };
+    }
+    case 'ram': {
+      const addrBits = Math.max(1, Math.min(20, comp.attrs.addrBits ?? 4));
+      const dataBits = Math.max(1, Math.min(32, comp.attrs.dataBits ?? 8));
+      return {
+        x: -70,
+        y: -35,
+        w: 70,
+        h: 70,
+        ports: [
+          { name: 'addr', local: { x: -70, y: -12 }, dir: 'in', bits: addrBits, label: 'A' },
+          { name: 'din', local: { x: -70, y: 12 }, dir: 'in', bits: dataBits, label: 'D' },
+          { name: 'we', local: { x: -45, y: 35 }, dir: 'in', bits: 1, label: 'WE' },
+          { name: 'clk', local: { x: -15, y: 35 }, dir: 'in', bits: 1, label: '›' },
+          { name: 'dout', local: { x: 0, y: 0 }, dir: 'out', bits: dataBits, label: 'Q' },
+        ],
+      };
+    }
+    case 'rom': {
+      const addrBits = Math.max(1, Math.min(20, comp.attrs.addrBits ?? 4));
+      const dataBits = Math.max(1, Math.min(32, comp.attrs.dataBits ?? 8));
+      return {
+        x: -60,
+        y: -20,
+        w: 60,
+        h: 40,
+        ports: [
+          { name: 'addr', local: { x: -60, y: 0 }, dir: 'in', bits: addrBits, label: 'A' },
+          { name: 'dout', local: { x: 0, y: 0 }, dir: 'out', bits: dataBits, label: 'Q' },
         ],
       };
     }
@@ -206,6 +326,145 @@ export function geom(comp: ComponentInstance): Geom {
       ports.push({ name: 'sel', local: { x: -20, y: h / 2 }, dir: 'in', bits: selBits, label: 'S' });
       ports.push({ name: 'out', local: { x: 0, y: 0 }, dir: 'out', bits });
       return { x: -w, y: -h / 2, w, h, ports };
+    }
+    case 'decoder': {
+      const selBits = Math.max(1, Math.min(4, comp.attrs.fans ?? 1));
+      const n = 1 << selBits;
+      const h = Math.max(44, n * 10 + 24);
+      const ports: PortGeom[] = [];
+      for (let i = 0; i < n; i++) {
+        ports.push({
+          name: `out${i}`,
+          local: { x: 0, y: -((n - 1) / 2) * 10 + i * 10 },
+          dir: 'out',
+          bits: 1,
+          label: `${i}`,
+        });
+      }
+      ports.push({ name: 'sel', local: { x: -20, y: h / 2 }, dir: 'in', bits: selBits, label: 'S' });
+      if (comp.attrs.enable) {
+        ports.push({ name: 'enable', local: { x: -20, y: -h / 2 }, dir: 'in', bits: 1, label: 'EN' });
+      }
+      return { x: -40, y: -h / 2, w: 40, h, ports };
+    }
+    case 'demux': {
+      const selBits = Math.max(1, Math.min(4, comp.attrs.fans ?? 1));
+      const n = 1 << selBits;
+      const h = Math.max(44, n * 10 + 24);
+      const ports: PortGeom[] = [
+        { name: 'in', local: { x: -40, y: -12 }, dir: 'in', bits, label: 'D' },
+      ];
+      for (let i = 0; i < n; i++) {
+        ports.push({
+          name: `out${i}`,
+          local: { x: 0, y: -((n - 1) / 2) * 10 + i * 10 },
+          dir: 'out',
+          bits,
+          label: `${i}`,
+        });
+      }
+      ports.push({ name: 'sel', local: { x: -20, y: h / 2 }, dir: 'in', bits: selBits, label: 'S' });
+      return { x: -40, y: -h / 2, w: 40, h, ports };
+    }
+    case 'priority': {
+      const selBits = Math.max(1, Math.min(4, comp.attrs.fans ?? 2));
+      const n = 1 << selBits;
+      const h = Math.max(44, n * 10 + 24);
+      const ports: PortGeom[] = [];
+      for (let i = 0; i < n; i++) {
+        ports.push({
+          name: `in${i}`,
+          local: { x: -40, y: -((n - 1) / 2) * 10 + i * 10 },
+          dir: 'in',
+          bits: 1,
+          label: `${i}`,
+        });
+      }
+      ports.push({ name: 'out', local: { x: 0, y: -8 }, dir: 'out', bits: selBits, label: 'S' });
+      ports.push({ name: 'group', local: { x: 0, y: 8 }, dir: 'out', bits: 1, label: 'G' });
+      return { x: -40, y: -h / 2, w: 40, h, ports };
+    }
+    case 'bitSelect': {
+      const selBits = Math.max(1, Math.min(5, comp.attrs.fans ?? 2));
+      return {
+        x: -40,
+        y: -26,
+        w: 40,
+        h: 52,
+        ports: [
+          { name: 'in', local: { x: -40, y: -10 }, dir: 'in', bits },
+          { name: 'sel', local: { x: -20, y: 26 }, dir: 'in', bits: selBits, label: 'S' },
+          { name: 'out', local: { x: 0, y: 0 }, dir: 'out', bits: 1 },
+        ],
+      };
+    }
+    case 'adder':
+    case 'subtractor': {
+      return {
+        x: -50,
+        y: -30,
+        w: 50,
+        h: 60,
+        ports: [
+          { name: 'a', local: { x: -50, y: -12 }, dir: 'in', bits, label: 'A' },
+          { name: 'b', local: { x: -50, y: 12 }, dir: 'in', bits, label: 'B' },
+          { name: 'cin', local: { x: -20, y: 30 }, dir: 'in', bits: 1, label: k === 'adder' ? 'Cin' : 'Bin' },
+          { name: 'out', local: { x: 0, y: -8 }, dir: 'out', bits, label: k === 'adder' ? 'S' : 'D' },
+          { name: 'carry', local: { x: 0, y: 8 }, dir: 'out', bits: 1, label: k === 'adder' ? 'Cout' : 'Bout' },
+        ],
+      };
+    }
+    case 'multiplier': {
+      const outBits = Math.min(32, bits * 2);
+      return {
+        x: -50,
+        y: -22,
+        w: 50,
+        h: 44,
+        ports: [
+          { name: 'a', local: { x: -50, y: -9 }, dir: 'in', bits, label: 'A' },
+          { name: 'b', local: { x: -50, y: 9 }, dir: 'in', bits, label: 'B' },
+          { name: 'out', local: { x: 0, y: 0 }, dir: 'out', bits: outBits, label: 'P' },
+        ],
+      };
+    }
+    case 'comparator': {
+      return {
+        x: -50,
+        y: -25,
+        w: 50,
+        h: 50,
+        ports: [
+          { name: 'a', local: { x: -50, y: -12 }, dir: 'in', bits, label: 'A' },
+          { name: 'b', local: { x: -50, y: 12 }, dir: 'in', bits, label: 'B' },
+          { name: 'gt', local: { x: 0, y: -10 }, dir: 'out', bits: 1, label: '>' },
+          { name: 'eq', local: { x: 0, y: 0 }, dir: 'out', bits: 1, label: '=' },
+          { name: 'lt', local: { x: 0, y: 10 }, dir: 'out', bits: 1, label: '<' },
+        ],
+      };
+    }
+    case 'shifter': {
+      const selBits = Math.max(1, Math.min(5, Math.ceil(Math.log2(bits)) + 1));
+      return {
+        x: -50,
+        y: -26,
+        w: 50,
+        h: 52,
+        ports: [
+          { name: 'in', local: { x: -50, y: -10 }, dir: 'in', bits, label: 'D' },
+          { name: 'sel', local: { x: -20, y: 26 }, dir: 'in', bits: selBits, label: 'S' },
+          { name: 'out', local: { x: 0, y: 0 }, dir: 'out', bits },
+        ],
+      };
+    }
+    case 'sevenseg': {
+      return {
+        x: 0,
+        y: -30,
+        w: 38,
+        h: 60,
+        ports: [{ name: 'in', local: { x: 0, y: 0 }, dir: 'in', bits: 4 }],
+      };
     }
     case 'split': {
       const fans = Math.max(2, Math.min(12, comp.attrs.fans ?? 2));
@@ -242,6 +501,24 @@ export function geom(comp: ComponentInstance): Geom {
         w,
         h: 20,
         ports: [{ name: 'net', local: { x: 0, y: 0 }, dir: 'inout', bits: 0 }],
+      };
+    }
+    case 'sub': {
+      const w = Math.max(40, comp.attrs.subW ?? 80);
+      const h = Math.max(40, comp.attrs.subH ?? 60);
+      const pins = comp.attrs.subPins ?? [];
+      return {
+        x: 0,
+        y: 0,
+        w,
+        h,
+        ports: pins.map((p) => ({
+          name: p.id,
+          local: { x: p.kind === 'input' ? 0 : w, y: p.y },
+          dir: p.kind === 'input' ? 'in' : 'out',
+          bits: p.bits,
+          label: p.label,
+        })),
       };
     }
     case 'text': {
@@ -429,6 +706,8 @@ export interface RouteOptions {
   endFacing?: Facing;
   flip?: boolean;
   obstacles?: Bounds[];
+  /** Existing wire segments; overlapping collinear runs score badly. */
+  wires?: { a: Point; b: Point }[];
 }
 
 function segmentHitsRect(a: Point, b: Point, r: Bounds, pad = 3): boolean {
@@ -454,11 +733,30 @@ function segmentHitsRect(a: Point, b: Point, r: Bounds, pad = 3): boolean {
   return false;
 }
 
+function collinearOverlap(a: Point, b: Point, c: Point, d: Point): number {
+  const abVertical = Math.abs(a.x - b.x) < 0.01;
+  const cdVertical = Math.abs(c.x - d.x) < 0.01;
+  const abHorizontal = Math.abs(a.y - b.y) < 0.01;
+  const cdHorizontal = Math.abs(c.y - d.y) < 0.01;
+  if (abVertical && cdVertical && Math.abs(a.x - c.x) < 0.01) {
+    const lo = Math.max(Math.min(a.y, b.y), Math.min(c.y, d.y));
+    const hi = Math.min(Math.max(a.y, b.y), Math.max(c.y, d.y));
+    return Math.max(0, hi - lo);
+  }
+  if (abHorizontal && cdHorizontal && Math.abs(a.y - c.y) < 0.01) {
+    const lo = Math.max(Math.min(a.x, b.x), Math.min(c.x, d.x));
+    const hi = Math.min(Math.max(a.x, b.x), Math.max(c.x, d.x));
+    return Math.max(0, hi - lo);
+  }
+  return 0;
+}
+
 function scoreRoute(
   points: Point[],
   startFacing?: Facing,
   endFacing?: Facing,
   obstacles?: Bounds[],
+  wires?: { a: Point; b: Point }[],
 ): number {
   let score = (points.length - 2) * 8;
   for (let i = 1; i < points.length; i++) {
@@ -466,6 +764,11 @@ function scoreRoute(
     if (obstacles?.length) {
       for (const r of obstacles) {
         if (segmentHitsRect(points[i - 1], points[i], r)) score += 1200;
+      }
+    }
+    if (wires?.length) {
+      for (const w of wires) {
+        if (collinearOverlap(points[i - 1], points[i], w.a, w.b) > 1.5) score += 900;
       }
     }
   }
@@ -527,7 +830,7 @@ export function routeWire(a: Point, b: Point, opts: RouteOptions = {}): Point[] 
   let best = candidates[0];
   let bestScore = Infinity;
   for (const c of candidates) {
-    let score = scoreRoute(c, opts.startFacing, opts.endFacing, opts.obstacles);
+    let score = scoreRoute(c, opts.startFacing, opts.endFacing, opts.obstacles, opts.wires);
     if (opts.flip) {
       // Nudge the router toward the alternative first bend when the user asks for it.
       if (c.length === 3) {

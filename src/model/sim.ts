@@ -1,5 +1,6 @@
-import type { ComponentInstance, Doc } from './types';
+import type { ComponentInstance, Doc, SimWireState } from './types';
 import { buildNetlist, type Netlist } from './netlist';
+import { flattenCircuit } from './hierarchy';
 
 const MASK_CACHE: Record<number, number> = {};
 export function maskFor(bits: number): number {
@@ -12,41 +13,105 @@ export function maskFor(bits: number): number {
   return MASK_CACHE[b];
 }
 
+const KNOWN = 0;
+const FLOATING = 1;
+const ERROR = 2;
+type NetState = 0 | 1 | 2;
+
+interface Driver {
+  value: number;
+  error: boolean;
+  weak: boolean;
+}
+
+type Read = (port: string) => number;
+type ReadState = (port: string) => SimWireState;
+type Drive = (port: string, value: number, opts?: { enabled?: boolean; weak?: boolean; error?: boolean }) => void;
+
+interface EvalContext {
+  pinValues: Map<string, number>;
+  heldButtons: Set<string>;
+  clockValue: (id: string) => number;
+  seqQ: (id: string) => number;
+  seqBits: (id: string) => number;
+  memory: (comp: ComponentInstance) => Uint32Array;
+}
+
+function bitsOf(comp: ComponentInstance, fallback = 1): number {
+  return Math.max(1, Math.min(32, comp.attrs.bits ?? fallback));
+}
+
+function extenderBits(comp: ComponentInstance): { inBits: number; outBits: number } {
+  return {
+    inBits: Math.max(1, Math.min(32, comp.attrs.inBits ?? 4)),
+    outBits: Math.max(1, Math.min(32, comp.attrs.outBits ?? 8)),
+  };
+}
+
+function memorySize(comp: ComponentInstance): number {
+  const addrBits = Math.max(1, Math.min(20, comp.attrs.addrBits ?? 4));
+  return Math.min(1 << addrBits, 1 << 20);
+}
+
 function evalComponent(
   comp: ComponentInstance,
-  read: (port: string) => number,
-  write: (port: string, value: number) => void,
-  pinValues: Map<string, number>,
-  heldButtons: Set<string>,
-  clockValue: (id: string) => number,
-  dffQ: (id: string) => number,
+  read: Read,
+  state: ReadState,
+  drive: Drive,
+  ctx: EvalContext,
 ) {
-  const bits = Math.max(1, Math.min(32, comp.attrs.bits ?? 1));
+  const bits = bitsOf(comp);
+  const anyBad = (names: string[]) => names.some((name) => state(name) !== 'known');
+  const bad = (port: string) => state(port) !== 'known';
+
   switch (comp.kind) {
     case 'input': {
-      write('out', (pinValues.get(comp.id) ?? 0) & maskFor(bits));
+      // Pins inside an instantiated subcircuit are pass-through terminals: the
+      // parent net already drives the wire through the flattened connection.
+      if (comp.attrs._interface) break;
+      drive('out', (ctx.pinValues.get(comp.id) ?? 0) & maskFor(bits));
       break;
     }
     case 'button': {
-      write('out', heldButtons.has(comp.id) ? 1 : 0);
+      drive('out', ctx.heldButtons.has(comp.id) ? 1 : 0);
       break;
     }
     case 'clock': {
-      write('out', clockValue(comp.id) & 1);
+      drive('out', ctx.clockValue(comp.id) & 1);
       break;
     }
     case 'constant': {
-      write('out', Math.round(comp.attrs.value ?? 0) & maskFor(bits));
+      drive('out', Math.round(comp.attrs.value ?? 0) & maskFor(bits));
       break;
     }
+    case 'power': {
+      drive('out', 1);
+      break;
+    }
+    case 'ground': {
+      drive('out', 0);
+      break;
+    }
+    case 'pull': {
+      drive('net', (comp.attrs.pull ?? 0) ? 1 : 0, { weak: true });
+      break;
+    }
+    case 'probe':
+    case 'sevenseg':
     case 'led':
     case 'output':
     case 'tunnel':
+    case 'sub':
     case 'text':
       break;
     case 'not': {
-      const v = read('in');
-      write('out', v === 1 ? 0 : 1);
+      if (bad('in')) drive('out', 0, { error: true });
+      else drive('out', (~read('in') & maskFor(bits)) >>> 0);
+      break;
+    }
+    case 'buffer': {
+      if (bad('in')) drive('out', 0, { error: true });
+      else drive('out', read('in') & maskFor(bits));
       break;
     }
     case 'and':
@@ -56,49 +121,272 @@ function evalComponent(
     case 'xor':
     case 'xnor': {
       const n = Math.max(2, Math.min(5, comp.attrs.inputs ?? 2));
-      let acc = comp.kind === 'and' || comp.kind === 'nand' ? 1 : 0;
-      for (let i = 0; i < n; i++) {
-        const v = read(`in${i}`) & 1;
+      if (anyBad(Array.from({ length: n }, (_, i) => `in${i}`))) {
+        drive('out', 0, { error: true });
+        break;
+      }
+      const mask = maskFor(bits);
+      const first = read('in0') & mask;
+      let acc = first;
+      for (let i = 1; i < n; i++) {
+        const v = read(`in${i}`) & mask;
         if (comp.kind === 'and' || comp.kind === 'nand') acc &= v;
         else if (comp.kind === 'or' || comp.kind === 'nor') acc |= v;
         else acc ^= v;
       }
-      if (comp.kind === 'nand' || comp.kind === 'nor' || comp.kind === 'xnor') acc = acc ? 0 : 1;
-      write('out', acc);
+      if (comp.kind === 'nand' || comp.kind === 'nor' || comp.kind === 'xnor') {
+        acc = (~acc & mask) >>> 0;
+      }
+      drive('out', acc & mask);
+      break;
+    }
+    case 'odd':
+    case 'even': {
+      const n = Math.max(2, Math.min(5, comp.attrs.inputs ?? 2));
+      if (anyBad(Array.from({ length: n }, (_, i) => `in${i}`))) {
+        drive('out', 0, { error: true });
+        break;
+      }
+      let parity = 0;
+      for (let i = 0; i < n; i++) {
+        let v = read(`in${i}`) & maskFor(bits);
+        while (v) {
+          parity ^= 1;
+          v &= v - 1;
+        }
+      }
+      drive('out', comp.kind === 'odd' ? parity : parity ? 0 : 1);
+      break;
+    }
+    case 'ctrlBuffer':
+    case 'ctrlInverter': {
+      if (bad('enable')) {
+        drive('out', 0, { error: true });
+        break;
+      }
+      if (!(read('enable') & 1)) break; // high impedance: no driver at all
+      if (bad('in')) drive('out', 0, { error: true });
+      else if (comp.kind === 'ctrlInverter') {
+        drive('out', (~read('in') & maskFor(bits)) >>> 0);
+      } else {
+        drive('out', read('in') & maskFor(bits));
+      }
+      break;
+    }
+    case 'extend': {
+      const { inBits, outBits } = extenderBits(comp);
+      if (bad('in')) {
+        drive('out', 0, { error: true });
+        break;
+      }
+      let v = read('in') & maskFor(inBits);
+      if (comp.attrs.sign && (v & (1 << (inBits - 1)))) {
+        v |= (~maskFor(inBits)) >>> 0;
+      }
+      drive('out', v & maskFor(outBits));
       break;
     }
     case 'dff': {
-      const q = dffQ(comp.id) & 1;
-      write('q', q);
-      write('qn', q ? 0 : 1);
+      const q = ctx.seqQ(comp.id) & 1;
+      drive('q', q);
+      drive('qn', q ? 0 : 1);
+      break;
+    }
+    case 'register': {
+      drive('q', ctx.seqQ(comp.id) & maskFor(bits));
+      break;
+    }
+    case 'counter': {
+      const q = ctx.seqQ(comp.id) & maskFor(bits);
+      drive('q', q);
+      const max = maskFor(bits);
+      const carry = (comp.attrs.count ?? 'up') === 'down' ? q === 0 : q === max;
+      drive('carry', carry ? 1 : 0);
+      break;
+    }
+    case 'ram':
+    case 'rom': {
+      const addrBits = Math.max(1, Math.min(20, comp.attrs.addrBits ?? 4));
+      const dataBits = Math.max(1, Math.min(32, comp.attrs.dataBits ?? 8));
+      if (bad('addr')) {
+        drive('dout', 0, { error: true });
+        break;
+      }
+      const mem = ctx.memory(comp);
+      const addr = (read('addr') >>> 0) % Math.max(1, 1 << addrBits);
+      drive('dout', (mem[addr] ?? 0) & maskFor(dataBits));
       break;
     }
     case 'mux': {
-      const n = 1 << Math.max(1, Math.min(4, comp.attrs.fans ?? 1));
+      const selBits = Math.max(1, Math.min(4, comp.attrs.fans ?? 1));
+      const n = 1 << selBits;
+      if (bad('sel')) {
+        drive('out', 0, { error: true });
+        break;
+      }
       const sel = read('sel');
-      let v = 0;
-      if (sel >= 0 && sel < n) v = read(`d${sel}`);
-      write('out', v & maskFor(bits));
+      if (sel >= n) {
+        drive('out', 0, { error: true });
+        break;
+      }
+      if (bad(`d${sel}`)) drive('out', 0, { error: true });
+      else drive('out', read(`d${sel}`) & maskFor(bits));
+      break;
+    }
+    case 'decoder': {
+      const selBits = Math.max(1, Math.min(4, comp.attrs.fans ?? 1));
+      const n = 1 << selBits;
+      let enabled = true;
+      if (comp.attrs.enable) {
+        if (bad('enable')) {
+          for (let i = 0; i < n; i++) drive(`out${i}`, 0, { error: true });
+          break;
+        }
+        enabled = (read('enable') & 1) !== 0;
+      }
+      if (bad('sel')) {
+        for (let i = 0; i < n; i++) drive(`out${i}`, 0, { error: true });
+        break;
+      }
+      const sel = read('sel');
+      for (let i = 0; i < n; i++) drive(`out${i}`, enabled && i === sel ? 1 : 0);
+      break;
+    }
+    case 'demux': {
+      const selBits = Math.max(1, Math.min(4, comp.attrs.fans ?? 1));
+      const n = 1 << selBits;
+      if (bad('sel') || bad('in')) {
+        for (let i = 0; i < n; i++) drive(`out${i}`, 0, { error: true });
+        break;
+      }
+      const sel = read('sel');
+      for (let i = 0; i < n; i++) {
+        drive(`out${i}`, i === sel ? read('in') & maskFor(bits) : 0);
+      }
+      break;
+    }
+    case 'priority': {
+      const selBits = Math.max(1, Math.min(4, comp.attrs.fans ?? 2));
+      const n = 1 << selBits;
+      let index = -1;
+      let group = 0;
+      let sawError = false;
+      for (let i = 0; i < n; i++) {
+        const st = state(`in${i}`);
+        if (st === 'e') sawError = true;
+        if (st === 'known' && (read(`in${i}`) & 1)) {
+          group = 1;
+          if (i > index) index = i;
+        }
+      }
+      if (sawError && index < 0) drive('out', 0, { error: true });
+      else drive('out', index < 0 ? 0 : index);
+      drive('group', group);
+      break;
+    }
+    case 'bitSelect': {
+      const selBits = Math.max(1, Math.min(5, comp.attrs.fans ?? 2));
+      if (bad('sel') || bad('in')) {
+        drive('out', 0, { error: true });
+        break;
+      }
+      const sel = read('sel') % (1 << selBits);
+      drive('out', (read('in') >>> sel) & 1);
+      break;
+    }
+    case 'adder':
+    case 'subtractor': {
+      if (bad('a') || bad('b') || bad('cin')) {
+        drive('out', 0, { error: true });
+        drive('carry', 0, { error: true });
+        break;
+      }
+      const a = read('a') & maskFor(bits);
+      const b = read('b') & maskFor(bits);
+      const cin = read('cin') & 1;
+      if (comp.kind === 'adder') {
+        const sum = a + b + cin;
+        drive('out', sum & maskFor(bits));
+        drive('carry', sum > maskFor(bits) ? 1 : 0);
+      } else {
+        const diff = a - b - cin;
+        drive('out', diff & maskFor(bits));
+        drive('carry', diff < 0 ? 1 : 0);
+      }
+      break;
+    }
+    case 'multiplier': {
+      const outBits = Math.min(32, bits * 2);
+      if (bad('a') || bad('b')) {
+        drive('out', 0, { error: true });
+        break;
+      }
+      const product = BigInt(read('a') & maskFor(bits)) * BigInt(read('b') & maskFor(bits));
+      drive('out', Number(product & BigInt(maskFor(outBits))) >>> 0);
+      break;
+    }
+    case 'comparator': {
+      if (bad('a') || bad('b')) {
+        drive('gt', 0, { error: true });
+        drive('eq', 0, { error: true });
+        drive('lt', 0, { error: true });
+        break;
+      }
+      const a = read('a') & maskFor(bits);
+      const b = read('b') & maskFor(bits);
+      drive('gt', a > b ? 1 : 0);
+      drive('eq', a === b ? 1 : 0);
+      drive('lt', a < b ? 1 : 0);
+      break;
+    }
+    case 'shifter': {
+      if (bad('in') || bad('sel')) {
+        drive('out', 0, { error: true });
+        break;
+      }
+      const selBits = Math.max(1, Math.min(5, Math.ceil(Math.log2(bits)) + 1));
+      const amount = read('sel') % (1 << selBits);
+      const mask = maskFor(bits);
+      const v = read('in') & mask;
+      const direction = comp.attrs.shift ?? 'left';
+      let out: number;
+      if (direction === 'left') out = (v << amount) & mask;
+      else if (direction === 'arithmetic') {
+        const sign = v & (1 << (bits - 1));
+        out = (v >> amount) & mask;
+        if (sign) out = (out | ((mask << (bits - amount)) & mask)) & mask;
+      } else {
+        out = (v >>> amount) & mask;
+      }
+      drive('out', out);
       break;
     }
     case 'split': {
       const fans = Math.max(2, Math.min(12, comp.attrs.fans ?? 2));
+      if (bad('bus')) {
+        for (let i = 0; i < fans; i++) drive(`f${i}`, 0, { error: true });
+        break;
+      }
       const bus = read('bus');
       const fanBits = Math.max(1, Math.floor(bits / fans));
       for (let i = 0; i < fans; i++) {
-        write(`f${i}`, (bus >>> (i * fanBits)) & maskFor(fanBits));
+        drive(`f${i}`, (bus >>> (i * fanBits)) & maskFor(fanBits));
       }
       break;
     }
     case 'merge': {
       const fans = Math.max(2, Math.min(12, comp.attrs.fans ?? 2));
       const fanBits = Math.max(1, Math.floor(bits / fans));
+      if (anyBad(Array.from({ length: fans }, (_, i) => `f${i}`))) {
+        drive('bus', 0, { error: true });
+        break;
+      }
       let bus = 0;
       for (let i = 0; i < fans; i++) {
         const v = read(`f${i}`) & maskFor(fanBits);
         bus = (bus | (v << (i * fanBits))) >>> 0;
       }
-      write('bus', bus & maskFor(bits));
+      drive('bus', bus & maskFor(bits));
       break;
     }
   }
@@ -108,41 +396,68 @@ export interface SimValue {
   value: number;
   width: number;
   high: boolean;
+  state: SimWireState;
+}
+
+interface SeqState {
+  q: number;
+  prevClk: number;
+  init: boolean;
+  bits: number;
 }
 
 export class Simulator {
   private doc: Doc | null = null;
+  private circuits: Record<string, Doc> | undefined;
+  private flat: Doc | null = null;
   private netlist: Netlist | null = null;
   private values = new Uint32Array(0);
+  private states = new Uint8Array(0);
   private scratch = new Uint32Array(0);
+  private scratchStates = new Uint8Array(0);
+  private drivers: Driver[][] = [];
+  private lastChangedNets = new Set<number>();
   private pinValues = new Map<string, number>();
   private heldButtons = new Set<string>();
-  private dffState = new Map<string, { q: number; prevClk: number; init: boolean }>();
+  private seqState = new Map<string, SeqState>();
   private clockState = new Map<string, { value: number; nextAt: number }>();
+  private memories = new Map<string, { sig: string; data: Uint32Array }>();
   private running = false;
   private dirty = true;
   private evalCount = 0;
+  private errors: string[] = [];
   tick = 0;
 
-  update(doc: Doc) {
-    if (doc === this.doc && this.netlist) return;
+  update(doc: Doc, circuits?: Record<string, Doc>) {
+    if (doc === this.doc && circuits === this.circuits && this.netlist) return;
     this.doc = doc;
-    this.netlist = buildNetlist(doc);
+    this.circuits = circuits;
+    const flat = circuits ? flattenCircuit(doc, circuits) : { doc, errors: [] };
+    this.flat = flat.doc;
+    this.errors = flat.errors;
+    this.netlist = buildNetlist(flat.doc);
     this.values = new Uint32Array(this.netlist.nets.length);
+    this.states = new Uint8Array(this.netlist.nets.length);
     this.scratch = new Uint32Array(this.netlist.nets.length);
+    this.scratchStates = new Uint8Array(this.netlist.nets.length);
+    this.drivers = Array.from({ length: this.netlist.nets.length }, () => []);
     this.dirty = true;
     this.evalCount = 0;
-    const present = new Set(doc.comps.map((c) => c.id));
+    const present = new Set(flat.doc.comps.map((c) => c.id));
     for (const id of this.pinValues.keys()) if (!present.has(id)) this.pinValues.delete(id);
     for (const id of this.heldButtons) if (!present.has(id)) this.heldButtons.delete(id);
+    for (const id of this.seqState.keys()) if (!present.has(id)) this.seqState.delete(id);
+    for (const id of this.clockState.keys()) if (!present.has(id)) this.clockState.delete(id);
+    for (const id of this.memories.keys()) if (!present.has(id)) this.memories.delete(id);
   }
 
-  private dff(id: string) {
-    let st = this.dffState.get(id);
+  private seqComp(comp: ComponentInstance, bits: number) {
+    let st = this.seqState.get(comp.id);
     if (!st) {
-      st = { q: 0, prevClk: 0, init: false };
-      this.dffState.set(id, st);
+      st = { q: 0, prevClk: 0, init: false, bits };
+      this.seqState.set(comp.id, st);
     }
+    st.bits = bits;
     return st;
   }
 
@@ -155,102 +470,278 @@ export class Simulator {
     return st;
   }
 
+  private memory(comp: ComponentInstance): Uint32Array {
+    const size = memorySize(comp);
+    const source = comp.attrs.memory ?? [];
+    let hash = source.length;
+    for (let i = 0; i < source.length; i++) hash = (hash * 31 + (source[i] >>> 0)) | 0;
+    const sig = `${size}:${comp.attrs.dataBits ?? 8}:${hash}`;
+    let mem = this.memories.get(comp.id);
+    if (!mem || mem.sig !== sig) {
+      const data = new Uint32Array(size);
+      for (let i = 0; i < Math.min(size, source.length); i++) data[i] = source[i] >>> 0;
+      mem = { sig, data };
+      this.memories.set(comp.id, mem);
+    }
+    return mem.data;
+  }
+
+  /** Copy an edited memory array back into the simulator. */
+  loadMemory(comp: ComponentInstance, values: number[]) {
+    const size = memorySize(comp);
+    const data = new Uint32Array(size);
+    for (let i = 0; i < Math.min(size, values.length); i++) data[i] = values[i] >>> 0;
+    this.memories.set(comp.id, { sig: `${size}:${comp.attrs.dataBits ?? 8}`, data });
+    this.dirty = true;
+  }
+
+  memoryValues(comp: ComponentInstance): number[] {
+    return Array.from(this.memory(comp));
+  }
+
   private evalOnce(useScratch: boolean): boolean {
     const nl = this.netlist;
     if (!nl) return false;
     const prev = this.values;
+    const prevStates = this.states;
     const next = useScratch ? this.scratch : this.values;
+    const nextStates = useScratch ? this.scratchStates : this.states;
     next.fill(0);
+    nextStates.fill(FLOATING);
+    for (const list of this.drivers) list.length = 0;
     const portNet = (compId: string, port: string) => nl.portNet.get(`${compId}:${port}`) ?? -1;
-    const read = (compId: string) => (port: string) => {
+
+    const readOf = (compId: string): Read => (port: string) => {
       const n = portNet(compId, port);
-      return n < 0 ? 0 : prev[n] >>> 0;
+      return n < 0 || prevStates[n] !== KNOWN ? 0 : prev[n] >>> 0;
     };
-    const write = (compId: string) => (port: string, val: number) => {
+    const stateOf = (compId: string): ReadState => (port: string) => {
+      const n = portNet(compId, port);
+      if (n < 0) return 'z';
+      return prevStates[n] === KNOWN ? 'known' : prevStates[n] === ERROR ? 'e' : 'z';
+    };
+    const driveOf = (compId: string): Drive => (port, value, opts = {}) => {
+      if (opts.enabled === false) return;
       const n = portNet(compId, port);
       if (n < 0) return;
-      const w = nl.nets[n].width;
-      next[n] = (next[n] | (val & maskFor(w))) >>> 0;
+      const width = nl.nets[n].width;
+      this.drivers[n].push({
+        value: opts.error ? 0 : (value & maskFor(width)) >>> 0,
+        error: !!opts.error,
+        weak: !!opts.weak,
+      });
     };
-    const comps = this.doc?.comps ?? [];
+
+    const comps = this.flat?.comps ?? [];
     for (const comp of comps) {
-      evalComponent(
-        comp,
-        read(comp.id),
-        write(comp.id),
-        this.pinValues,
-        this.heldButtons,
-        (id) => {
-          const st = this.clockState.get(id);
-          return st?.value ?? 0;
-        },
-        (id) => {
-          const st = this.dffState.get(id);
-          return st?.q ?? 0;
-        },
-      );
+      evalComponent(comp, readOf(comp.id), stateOf(comp.id), driveOf(comp.id), {
+        pinValues: this.pinValues,
+        heldButtons: this.heldButtons,
+        clockValue: (id) => this.clockState.get(id)?.value ?? 0,
+        seqQ: (id) => this.seqState.get(id)?.q ?? 0,
+        seqBits: (id) => this.seqState.get(id)?.bits ?? 1,
+        memory: (c) => this.memory(c),
+      });
     }
-    for (const comp of comps) {
-      if (comp.kind !== 'dff') continue;
-      const st = this.dff(comp.id);
-      const qn = portNet(comp.id, 'q');
-      const q = qn >= 0 ? next[qn] >>> 0 : 0;
-      st.q = q & 1;
+
+    // Resolve multiple drivers exactly like Logisim: equal values are fine,
+    // conflicting strong drivers become E, and a weak pull only wins when
+    // nothing strong is driving the net.
+    for (let n = 0; n < nl.nets.length; n++) {
+      const list = this.drivers[n];
+      if (!list.length) {
+        nextStates[n] = FLOATING;
+        continue;
+      }
+      let strong: Driver | null = null;
+      let strongError = false;
+      let conflict = false;
+      let weak: Driver | null = null;
+      let weakError = false;
+      let weakConflict = false;
+      for (const d of list) {
+        if (d.error) {
+          if (d.weak) weakError = true;
+          else strongError = true;
+          continue;
+        }
+        if (d.weak) {
+          if (!weak) weak = d;
+          else if (weak.value !== d.value) weakConflict = true;
+        } else {
+          if (!strong) strong = d;
+          else if (strong.value !== d.value) conflict = true;
+        }
+      }
+      if (strongError || conflict) {
+        nextStates[n] = ERROR;
+      } else if (strong) {
+        nextValuesOr(next, n, strong.value);
+        nextStates[n] = KNOWN;
+      } else if (weakError || weakConflict) {
+        nextStates[n] = ERROR;
+      } else if (weak) {
+        nextValuesOr(next, n, weak.value);
+        nextStates[n] = KNOWN;
+      } else {
+        nextStates[n] = FLOATING;
+      }
     }
+
     if (useScratch) {
       let changed = false;
+      this.lastChangedNets.clear();
       for (let i = 0; i < next.length; i++) {
-        if (next[i] !== prev[i]) {
+        if (next[i] !== prev[i] || nextStates[i] !== prevStates[i]) {
           changed = true;
-          break;
+          this.lastChangedNets.add(i);
         }
       }
       const tmp = this.values;
       this.values = this.scratch;
       this.scratch = tmp;
+      const tmpS = this.states;
+      this.states = this.scratchStates;
+      this.scratchStates = tmpS;
       return changed;
     }
     return true;
+  }
+
+  private netValue(compId: string, port: string): number {
+    const nl = this.netlist;
+    if (!nl) return 0;
+    const n = nl.portNet.get(`${compId}:${port}`);
+    return n === undefined || this.states[n] !== KNOWN ? 0 : this.values[n] >>> 0;
+  }
+
+  private netKnown(compId: string, port: string): boolean {
+    const nl = this.netlist;
+    if (!nl) return false;
+    const n = nl.portNet.get(`${compId}:${port}`);
+    return n !== undefined && this.states[n] === KNOWN;
   }
 
   private compute(): boolean {
     const nl = this.netlist;
     if (!nl) return false;
     let changed = false;
-    // Relax combinational logic to a fixed point.
-    for (let i = 0; i < 24; i++) {
+    let settled = false;
+    for (let i = 0; i < 64; i++) {
       const ch = this.evalOnce(true);
       if (ch) changed = true;
-      else break;
+      else {
+        settled = true;
+        break;
+      }
+    }
+    if (!settled) {
+      // Feedback did not settle. Only the nets that kept changing are marked
+      // as E, so unrelated parts of the circuit stay usable.
+      for (const n of this.lastChangedNets) this.states[n] = ERROR;
     }
 
-    // Clocked elements see the stable combinational values and capture on edges.
+    // Sequential updates see the stable combinational values.
     let edgeChanged = false;
-    const comps = this.doc?.comps ?? [];
+    const comps = this.flat?.comps ?? [];
     for (const comp of comps) {
-      if (comp.kind !== 'dff') continue;
-      const clkNet = nl.portNet.get(`${comp.id}:clk`);
-      const dNet = nl.portNet.get(`${comp.id}:d`);
-      if (clkNet === undefined || dNet === undefined) continue;
-      const st = this.dff(comp.id);
-      const clk = this.values[clkNet] & 1;
-      const d = this.values[dNet] & 1;
-      if (!st.init) {
+      if (comp.kind === 'dff') {
+        const st = this.seqComp(comp, 1);
+        if (!this.netKnown(comp.id, 'clk') || !this.netKnown(comp.id, 'd')) continue;
+        const clk = this.netValue(comp.id, 'clk') & 1;
+        const d = this.netValue(comp.id, 'd') & 1;
+        if (!st.init) {
+          st.prevClk = clk;
+          st.init = true;
+          continue;
+        }
+        const rising = st.prevClk === 0 && clk === 1;
+        const falling = st.prevClk === 1 && clk === 0;
+        const trigger = comp.attrs.trigger === 'falling' ? falling : rising;
+        if (trigger && d !== st.q) {
+          st.q = d;
+          edgeChanged = true;
+        }
+        st.prevClk = clk;
+      } else if (comp.kind === 'register') {
+        const bits = bitsOf(comp, 8);
+        const st = this.seqComp(comp, bits);
+        const reset = comp.attrs.reset !== false && this.netKnown(comp.id, 'reset') && (this.netValue(comp.id, 'reset') & 1) === 1;
+        if (reset && st.q !== 0) {
+          st.q = 0;
+          edgeChanged = true;
+        }
+        if (!this.netKnown(comp.id, 'clk')) continue;
+        const clk = this.netValue(comp.id, 'clk') & 1;
+        if (!st.init) {
+          st.prevClk = clk;
+          st.init = true;
+          continue;
+        }
+        const rising = st.prevClk === 0 && clk === 1;
+        const falling = st.prevClk === 1 && clk === 0;
+        const trigger = comp.attrs.trigger === 'falling' ? falling : rising;
+        const enabled =
+          comp.attrs.enable === false ||
+          !this.netKnown(comp.id, 'enable') ||
+          (this.netValue(comp.id, 'enable') & 1) === 1;
+        if (trigger && enabled && !reset && this.netKnown(comp.id, 'd')) {
+          const next = this.netValue(comp.id, 'd') & maskFor(bits);
+          if (next !== st.q) {
+            st.q = next;
+            edgeChanged = true;
+          }
+        }
+        st.prevClk = clk;
+      } else if (comp.kind === 'counter') {
+        const bits = bitsOf(comp, 8);
+        const st = this.seqComp(comp, bits);
+        const reset = comp.attrs.reset !== false && this.netKnown(comp.id, 'reset') && (this.netValue(comp.id, 'reset') & 1) === 1;
+        if (reset && st.q !== 0) {
+          st.q = 0;
+          edgeChanged = true;
+        }
+        if (!this.netKnown(comp.id, 'clk')) continue;
+        const clk = this.netValue(comp.id, 'clk') & 1;
+        if (!st.init) {
+          st.prevClk = clk;
+          st.init = true;
+          continue;
+        }
+        const rising = st.prevClk === 0 && clk === 1;
+        const falling = st.prevClk === 1 && clk === 0;
+        const trigger = comp.attrs.trigger === 'falling' ? falling : rising;
+        const enabled =
+          comp.attrs.enable === false ||
+          !this.netKnown(comp.id, 'enable') ||
+          (this.netValue(comp.id, 'enable') & 1) === 1;
+        if (trigger && enabled && !reset) {
+          const max = maskFor(bits);
+          const dir = comp.attrs.count ?? 'up';
+          st.q = dir === 'down' ? (st.q - 1) & max : (st.q + 1) & max;
+          edgeChanged = true;
+        }
+        st.prevClk = clk;
+      } else if (comp.kind === 'ram') {
+        if (!this.netKnown(comp.id, 'clk') || !this.netKnown(comp.id, 'we')) continue;
+        const clk = this.netValue(comp.id, 'clk') & 1;
+        const st = this.seqState.get(comp.id) ?? { q: 0, prevClk: 0, init: false, bits: 1 };
+        this.seqState.set(comp.id, st);
+        const rising = st.prevClk === 0 && clk === 1;
+        if (st.init && rising && (this.netValue(comp.id, 'we') & 1) && this.netKnown(comp.id, 'addr') && this.netKnown(comp.id, 'din')) {
+          const addrBits = Math.max(1, Math.min(20, comp.attrs.addrBits ?? 4));
+          const dataBits = Math.max(1, Math.min(32, comp.attrs.dataBits ?? 8));
+          const mem = this.memory(comp);
+          const addr = (this.netValue(comp.id, 'addr') >>> 0) % Math.max(1, 1 << addrBits);
+          mem[addr] = this.netValue(comp.id, 'din') & maskFor(dataBits);
+          edgeChanged = true;
+        }
         st.prevClk = clk;
         st.init = true;
-        continue;
       }
-      const rising = st.prevClk === 0 && clk === 1;
-      const falling = st.prevClk === 1 && clk === 0;
-      const trigger = comp.attrs.trigger === 'falling' ? falling : rising;
-      if (trigger && d !== st.q) {
-        st.q = d;
-        edgeChanged = true;
-      }
-      st.prevClk = clk;
     }
     if (edgeChanged) {
-      for (let i = 0; i < 24; i++) {
+      for (let i = 0; i < 32; i++) {
         const ch = this.evalOnce(true);
         if (ch) changed = true;
         else break;
@@ -270,7 +761,7 @@ export class Simulator {
       this.running = false;
     } else {
       if (!this.running) {
-        for (const comp of this.doc?.comps ?? []) {
+        for (const comp of this.flat?.comps ?? []) {
           if (comp.kind !== 'clock') continue;
           const st = this.clock(comp.id, now);
           st.nextAt = now + 500 / Math.max(0.2, comp.attrs.freq ?? 2);
@@ -278,7 +769,7 @@ export class Simulator {
         this.running = true;
       }
       let clockChanged = false;
-      for (const comp of this.doc?.comps ?? []) {
+      for (const comp of this.flat?.comps ?? []) {
         if (comp.kind !== 'clock') continue;
         const freq = Math.max(0.2, Math.min(40, comp.attrs.freq ?? 2));
         const half = 500 / freq;
@@ -311,7 +802,7 @@ export class Simulator {
 
   togglePin(comp: ComponentInstance) {
     if (comp.kind !== 'input') return;
-    const bits = Math.max(1, Math.min(32, comp.attrs.bits ?? 1));
+    const bits = bitsOf(comp);
     if (bits === 1) {
       this.setPinValue(comp.id, (this.pinValues.get(comp.id) ?? 0) ? 0 : 1);
     }
@@ -325,8 +816,9 @@ export class Simulator {
     return this.heldButtons.has(compId);
   }
 
-  reset() {
-    for (const st of this.dffState.values()) {
+  reset(compute = true, clearMemory = false) {
+    if (clearMemory) this.memories.clear();
+    for (const st of this.seqState.values()) {
       st.q = 0;
       st.init = false;
     }
@@ -334,11 +826,11 @@ export class Simulator {
     this.heldButtons.clear();
     this.tick++;
     this.dirty = true;
-    this.compute();
+    if (compute) this.compute();
   }
 
-  ensure(doc: Doc) {
-    this.update(doc);
+  ensure(doc: Doc, circuits?: Record<string, Doc>) {
+    this.update(doc, circuits);
     if (this.dirty) this.compute();
   }
 
@@ -346,36 +838,56 @@ export class Simulator {
     return this.netlist;
   }
 
+  get errorsList(): string[] {
+    return this.errors;
+  }
+
   valueOfNet(netId: number): SimValue {
     const nl = this.netlist;
-    if (!nl || netId < 0 || netId >= nl.nets.length) return { value: 0, width: 1, high: false };
+    if (!nl || netId < 0 || netId >= nl.nets.length) return { value: 0, width: 1, high: false, state: 'z' };
+    const st = this.states[netId];
     return {
       value: this.values[netId] ?? 0,
       width: nl.nets[netId].width,
-      high: (this.values[netId] ?? 0) !== 0,
+      high: st === KNOWN && (this.values[netId] ?? 0) !== 0,
+      state: st === KNOWN ? 'known' : st === ERROR ? 'e' : 'z',
     };
   }
 
   valueOfWire(wireIndex: number): SimValue {
     const nl = this.netlist;
-    if (!nl) return { value: 0, width: 1, high: false };
+    if (!nl) return { value: 0, width: 1, high: false, state: 'z' };
     return this.valueOfNet(nl.wireNet[wireIndex]);
   }
 
   valueOfPort(compId: string, port: string): SimValue {
     const nl = this.netlist;
-    if (!nl) return { value: 0, width: 1, high: false };
+    if (!nl) return { value: 0, width: 1, high: false, state: 'z' };
     const n = nl.portNet.get(`${compId}:${port}`);
     return this.valueOfNet(n ?? -1);
+  }
+
+  stateOfPort(compId: string, port: string): SimWireState {
+    return this.valueOfPort(compId, port).state;
   }
 
   netOfPort(compId: string, port: string): number {
     return this.netlist?.portNet.get(`${compId}:${port}`) ?? -1;
   }
 
+  /** Run a synchronous combinational pass, used by the truth-table engine. */
+  evaluateNow(): boolean {
+    this.dirty = true;
+    return this.compute();
+  }
+
   get runningState() {
     return this.running;
   }
+}
+
+function nextValuesOr(arr: Uint32Array, index: number, value: number) {
+  arr[index] = value >>> 0;
 }
 
 export const sim = new Simulator();

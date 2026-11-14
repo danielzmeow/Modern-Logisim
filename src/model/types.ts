@@ -15,14 +15,59 @@ export type CompKind =
   | 'nor'
   | 'xor'
   | 'xnor'
+  | 'buffer'
+  | 'odd'
+  | 'even'
+  | 'ctrlBuffer'
+  | 'ctrlInverter'
   | 'split'
   | 'merge'
+  | 'probe'
+  | 'power'
+  | 'ground'
+  | 'pull'
+  | 'extend'
   | 'dff'
+  | 'register'
+  | 'counter'
+  | 'ram'
+  | 'rom'
   | 'mux'
+  | 'decoder'
+  | 'demux'
+  | 'priority'
+  | 'bitSelect'
+  | 'adder'
+  | 'subtractor'
+  | 'multiplier'
+  | 'comparator'
+  | 'shifter'
+  | 'sevenseg'
   | 'tunnel'
+  | 'sub'
   | 'text';
 
-export type GateKind = 'not' | 'and' | 'or' | 'nand' | 'nor' | 'xor' | 'xnor';
+export type GateKind =
+  | 'not'
+  | 'and'
+  | 'or'
+  | 'nand'
+  | 'nor'
+  | 'xor'
+  | 'xnor'
+  | 'buffer'
+  | 'odd'
+  | 'even';
+
+export interface SubPinLayout {
+  /** Component id of the pin inside the target circuit. */
+  id: string;
+  label: string;
+  kind: 'input' | 'output';
+  bits: number;
+  /** Port y position in symbol-local coordinates. */
+  y: number;
+}
 
 export interface CompAttrs {
   label?: string;
@@ -35,6 +80,31 @@ export interface CompAttrs {
   trigger?: 'rising' | 'falling';
   text?: string;
   color?: 'emerald' | 'sky' | 'amber' | 'rose' | 'violet';
+  /** Bit extender: source / destination width and sign extension. */
+  inBits?: number;
+  outBits?: number;
+  sign?: boolean;
+  /** Pull resistor direction. */
+  pull?: 0 | 1;
+  /** Enable / reset / tri-state attributes. */
+  enable?: boolean;
+  reset?: boolean;
+  /** Shifter direction. */
+  shift?: 'left' | 'right' | 'arithmetic';
+  /** Counter direction. */
+  count?: 'up' | 'down';
+  /** RAM / ROM geometry. */
+  addrBits?: number;
+  dataBits?: number;
+  memory?: number[];
+  /** Subcircuit target + generated symbol layout. */
+  circuit?: string;
+  circuitName?: string;
+  subPins?: SubPinLayout[];
+  subW?: number;
+  subH?: number;
+  /** Flattened interface pin marker (internal simulation use). */
+  _interface?: boolean;
 }
 
 export interface ComponentInstance {
@@ -68,7 +138,18 @@ export interface Selection {
   wires: string[];
 }
 
-export const GATE_KINDS: GateKind[] = ['not', 'and', 'or', 'nand', 'nor', 'xor', 'xnor'];
+export const GATE_KINDS: GateKind[] = [
+  'not',
+  'and',
+  'or',
+  'nand',
+  'nor',
+  'xor',
+  'xnor',
+  'buffer',
+  'odd',
+  'even',
+];
 export const isGate = (k: CompKind): k is GateKind => GATE_KINDS.includes(k as GateKind);
 
 export const FACING_VEC: Record<Facing, Point> = {
@@ -147,6 +228,15 @@ export function emptyDoc(name = 'Untitled Circuit'): Doc {
   return { version: 1, name, comps: [], wires: [] };
 }
 
+export type SimWireState = 'known' | 'z' | 'e';
+
+export interface ProjectSnapshot {
+  version: 2;
+  name: string;
+  current: string;
+  circuits: Record<string, Doc>;
+}
+
 export function cloneDoc(doc: Doc): Doc {
   return structuredClone(doc);
 }
@@ -165,11 +255,36 @@ export const KIND_NAMES: Record<CompKind, string> = {
   nor: '或非门',
   xor: '异或门',
   xnor: '同或门',
+  buffer: '缓冲器',
+  odd: '奇数校验',
+  even: '偶数校验',
+  ctrlBuffer: '三态缓冲器',
+  ctrlInverter: '三态反相器',
   split: '分线器',
   merge: '合线器',
+  probe: '探针',
+  power: '电源',
+  ground: '接地',
+  pull: '上拉/下拉电阻',
+  extend: '位扩展器',
   dff: 'D 触发器',
+  register: '寄存器',
+  counter: '计数器',
+  ram: 'RAM',
+  rom: 'ROM',
   mux: '多路选择器',
+  decoder: '译码器',
+  demux: '解复用器',
+  priority: '优先编码器',
+  bitSelect: '位选择器',
+  adder: '加法器',
+  subtractor: '减法器',
+  multiplier: '乘法器',
+  comparator: '比较器',
+  shifter: '移位器',
+  sevenseg: '七段数码管',
   tunnel: '隧道标签',
+  sub: '子电路',
   text: '文字注释',
 };
 
@@ -187,10 +302,35 @@ export const KIND_NAMES_EN: Record<CompKind, string> = {
   nor: 'NOR Gate',
   xor: 'XOR Gate',
   xnor: 'XNOR Gate',
+  buffer: 'Buffer',
+  odd: 'Odd Parity',
+  even: 'Even Parity',
+  ctrlBuffer: 'Controlled Buffer',
+  ctrlInverter: 'Controlled Inverter',
   split: 'Bus Split',
   merge: 'Bus Merge',
+  probe: 'Probe',
+  power: 'Power',
+  ground: 'Ground',
+  pull: 'Pull Resistor',
+  extend: 'Bit Extender',
   dff: 'D Flip-Flop',
+  register: 'Register',
+  counter: 'Counter',
+  ram: 'RAM',
+  rom: 'ROM',
   mux: 'Multiplexer',
+  decoder: 'Decoder',
+  demux: 'Demultiplexer',
+  priority: 'Priority Encoder',
+  bitSelect: 'Bit Selector',
+  adder: 'Adder',
+  subtractor: 'Subtractor',
+  multiplier: 'Multiplier',
+  comparator: 'Comparator',
+  shifter: 'Shifter',
+  sevenseg: 'Seven-Segment Display',
   tunnel: 'Tunnel',
+  sub: 'Subcircuit',
   text: 'Text',
 };
