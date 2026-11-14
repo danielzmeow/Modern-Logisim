@@ -116,16 +116,6 @@ export function Sidebar() {
         )}
       </div>
 
-      <div className="flex shrink-0 items-center justify-between border-t border-[var(--line)] px-3 py-2 text-[12px] text-[var(--text-muted)]">
-        <span className="flex items-center gap-1.5">
-          <span className="h-1.5 w-1.5 rounded-full bg-[var(--accent)]" />
-          {t('sidebar.dragOrClick')}
-        </span>
-        <span className="flex items-center gap-1">
-          <kbd className="kbd !h-[17px] !min-w-[17px] !text-[11px]">R</kbd>
-          {t('sidebar.rotate')}
-        </span>
-      </div>
     </aside>
   );
 }

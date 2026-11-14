@@ -745,21 +745,6 @@ export function Inspector() {
                 </button>
               </div>
             </Section>
-            <Section title={t('inspector.tips')}>
-              <div className="space-y-2 text-[12px] leading-[1.65] text-[var(--text-muted)]">
-                {[t('inspector.tip1'), t('inspector.tip2'), t('inspector.tip3'), t('inspector.tip4')].map(
-                  (tip) => (
-                    <div key={tip} className="flex gap-2">
-                      <span className="mt-[5px] h-1 w-1 shrink-0 rounded-full bg-[var(--accent)]" />
-                      {tip}
-                    </div>
-                  ),
-                )}
-              </div>
-            </Section>
-            <div className="px-3.5 pb-4 text-[12px] text-[var(--text-faint)]">
-              {t('inspector.shortcutsHint')}
-            </div>
           </>
         )}
       </div>

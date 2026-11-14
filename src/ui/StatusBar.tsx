@@ -1,8 +1,6 @@
 import { useState } from 'react';
 import { useEditor } from '../editor/store';
 import { viewControls } from '../canvas/view';
-import { KIND_NAMES, KIND_NAMES_EN } from '../model/types';
-import { itemCount } from '../i18n';
 import { useT } from './useT';
 import { useResolvedAppearance } from './useResolvedAppearance';
 import { Preferences } from './Preferences';
@@ -20,14 +18,8 @@ import {
 } from 'lucide-react';
 
 export function StatusBar() {
-  const tool = useEditor((s) => s.tool);
-  const pending = useEditor((s) => s.pendingKind);
   const running = useEditor((s) => s.running);
-  const selectedCompIds = useEditor((s) => s.selComps);
-  const selComps = selectedCompIds.length;
-  const selWires = useEditor((s) => s.selWires.length);
   const zoom = useEditor((s) => s.zoom);
-  const doc = useEditor((s) => s.doc);
   const cursor = useEditor((s) => s.cursorWorld);
   const showGrid = useEditor((s) => s.showGrid);
   const sidebar = useEditor((s) => s.sidebar);
@@ -42,32 +34,6 @@ export function StatusBar() {
   const { t } = useT();
   const [prefsOpen, setPrefsOpen] = useState(false);
 
-  const parts = itemCount(lang, selComps, '个元件', 'component');
-  const wires = itemCount(lang, selWires, '条导线', 'wire');
-  const onlyText =
-    selComps > 0 &&
-    selWires === 0 &&
-    doc.comps.filter((c) => selectedCompIds.includes(c.id)).every((c) => c.kind === 'text');
-  let hint: string;
-  if (pending) {
-    const name = lang === 'zh' ? KIND_NAMES[pending] : KIND_NAMES_EN[pending];
-    hint = t('status.place', { name });
-  } else if (tool === 'wire') {
-    hint = t('status.wire');
-  } else if (tool === 'pan') {
-    hint = t('status.pan');
-  } else if (selComps && selWires) {
-    hint = t('status.selectionBoth', { comps: parts, wires });
-  } else if (onlyText) {
-    hint = t('status.selectionText');
-  } else if (selComps) {
-    hint = t('status.selectionComp', { comps: parts });
-  } else if (selWires) {
-    hint = t('status.selectionWire', { wires });
-  } else {
-    hint = t('status.idle');
-  }
-
   const coords = cursor ? t('status.coords', { x: cursor.x, y: cursor.y }) : t('status.noCoords');
   const ThemeIcon = resolved === 'dark' ? Moon : Sun;
 
@@ -78,8 +44,6 @@ export function StatusBar() {
         <span className={running ? 'shrink-0 text-[var(--success-text)]' : 'shrink-0 text-[var(--text-secondary)]'}>
           {running ? t('status.simRunning') : t('status.simPaused')}
         </span>
-        <span className="shrink-0 text-[var(--line-strong)]">/</span>
-        <span className="truncate">{hint}</span>
       </div>
 
       <div className="ml-auto flex shrink-0 items-center gap-0.5">
