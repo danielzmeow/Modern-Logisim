@@ -23,9 +23,11 @@ export function StatusBar() {
   const tool = useEditor((s) => s.tool);
   const pending = useEditor((s) => s.pendingKind);
   const running = useEditor((s) => s.running);
-  const selComps = useEditor((s) => s.selComps.length);
+  const selectedCompIds = useEditor((s) => s.selComps);
+  const selComps = selectedCompIds.length;
   const selWires = useEditor((s) => s.selWires.length);
   const zoom = useEditor((s) => s.zoom);
+  const doc = useEditor((s) => s.doc);
   const cursor = useEditor((s) => s.cursorWorld);
   const showGrid = useEditor((s) => s.showGrid);
   const sidebar = useEditor((s) => s.sidebar);
@@ -42,6 +44,10 @@ export function StatusBar() {
 
   const parts = itemCount(lang, selComps, '个元件', 'component');
   const wires = itemCount(lang, selWires, '条导线', 'wire');
+  const onlyText =
+    selComps > 0 &&
+    selWires === 0 &&
+    doc.comps.filter((c) => selectedCompIds.includes(c.id)).every((c) => c.kind === 'text');
   let hint: string;
   if (pending) {
     const name = lang === 'zh' ? KIND_NAMES[pending] : KIND_NAMES_EN[pending];
@@ -52,6 +58,8 @@ export function StatusBar() {
     hint = t('status.pan');
   } else if (selComps && selWires) {
     hint = t('status.selectionBoth', { comps: parts, wires });
+  } else if (onlyText) {
+    hint = t('status.selectionText');
   } else if (selComps) {
     hint = t('status.selectionComp', { comps: parts });
   } else if (selWires) {
