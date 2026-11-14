@@ -625,6 +625,18 @@ export function collinearOverlap(a: Point, b: Point, c: Point, d: Point): number
   return 0;
 }
 
+/** Clamp a point onto an axis-aligned wire segment; the result lies on the segment. */
+export function pointOnWire(w: { a: Point; b: Point }, p: Point): Point {
+  if (Math.abs(w.a.x - w.b.x) < 0.01) {
+    const lo = Math.min(w.a.y, w.b.y);
+    const hi = Math.max(w.a.y, w.b.y);
+    return { x: w.a.x, y: Math.max(lo, Math.min(hi, Math.round(p.y))) };
+  }
+  const lo = Math.min(w.a.x, w.b.x);
+  const hi = Math.max(w.a.x, w.b.x);
+  return { x: Math.max(lo, Math.min(hi, Math.round(p.x))), y: w.a.y };
+}
+
 export function wireHit(wire: { a: Point; b: Point }, p: Point, width = 5): boolean {
   const dx = wire.b.x - wire.a.x;
   const dy = wire.b.y - wire.a.y;

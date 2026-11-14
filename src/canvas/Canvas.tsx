@@ -19,6 +19,7 @@ import {
   centerWorld,
   contentBounds,
   hitTest,
+  pointOnWire,
   portOutward,
   routeWire,
   rotatedBounds,
@@ -60,8 +61,11 @@ type Interaction =
       start: Point;
       startFacing?: Facing;
       startPort?: { compId: string; portName: string };
+      /** Segment the branch was pulled out of, if any. */
+      startWireId?: string;
       startScreen: Point;
       moved: boolean;
+      clearedSel: boolean;
       points: Point[];
       targetPort?: { compId: string; portName: string } | null;
       invalid: boolean;
@@ -193,17 +197,11 @@ export default function Canvas() {
       canvas.style.cursor = cursor;
     };
 
-    const pointOnWire = (w: { a: Point; b: Point }, p: Point): Point => {
-      if (Math.abs(w.a.x - w.b.x) < 0.01) {
-        return { x: w.a.x, y: Math.max(Math.min(w.a.y, w.b.y), Math.min(Math.max(w.a.y, w.b.y), Math.round(p.y))) };
-      }
-      return { x: Math.max(Math.min(w.a.x, w.b.x), Math.min(Math.max(w.a.x, w.b.x), Math.round(p.x))), y: w.a.y };
-    };
-
     const beginWire = (hit: Hit, world: Point, screen: Point) => {
       let start: Point;
       let startFacing: Facing | undefined;
       let startPort: { compId: string; portName: string } | undefined;
+      let startWireId: string | undefined;
       if (hit?.type === 'port') {
         start = hit.port.world;
         startFacing = portOutward(hit.comp, hit.port);
@@ -211,17 +209,23 @@ export default function Canvas() {
       } else if (hit?.type === 'wire') {
         const w = state().doc.wires.find((x) => x.id === hit.wireId);
         start = w ? pointOnWire(w, world) : snapPoint(world);
+        startWireId = w ? w.id : undefined;
       } else {
         start = snapPoint(world);
       }
-      state().clearSelection();
+      // Starting on a segment keeps the selection until the drag actually starts,
+      // so a plain click still behaves like "select this segment".
+      if (!startWireId) state().clearSelection();
+      state().setMenu(null);
       interactionRef.current = {
         mode: 'wire',
         start,
         startFacing,
         startPort,
+        startWireId,
         startScreen: screen,
         moved: false,
+        clearedSel: false,
         points: [start, start],
         targetPort: null,
         invalid: false,
@@ -344,8 +348,15 @@ export default function Canvas() {
         return;
       }
       if (hit?.type === 'wire') {
-        if (e.altKey) st.selectWireNet(hit.wireId, e.shiftKey || e.metaKey);
-        else st.selectWire(hit.wireId, e.shiftKey || e.metaKey);
+        const additive = e.shiftKey || e.metaKey;
+        if (e.altKey) st.selectWireNet(hit.wireId, additive);
+        else if (additive) st.selectWire(hit.wireId, true);
+        else {
+          // Pressing on a segment starts a branch; pointerup decides between
+          // "select this segment" (no drag) and "add a branch wire" (dragged).
+          beginWire(hit, world, screen);
+          return;
+        }
         st.setMenu(null);
         invalidate();
         return;
@@ -419,11 +430,17 @@ export default function Canvas() {
         if (Math.hypot(screen.x - inter.startScreen.x, screen.y - inter.startScreen.y) > 3) {
           inter.moved = true;
         }
+        if (inter.moved && inter.startWireId && !inter.clearedSel) {
+          inter.clearedSel = true;
+          st.clearSelection();
+        }
         const portRadius = 10 / st.zoom;
         const target = snapWireEnd(world, st.doc.comps, st.doc.wires, portRadius);
         const end = target.point;
         const endFacing = target.port && target.comp ? portOutward(target.comp, target.port) : undefined;
         const sameAsStart = Math.abs(end.x - inter.start.x) < 0.1 && Math.abs(end.y - inter.start.y) < 0.1;
+        // A branch that lands back on the segment it came from would be a loop on one net.
+        const sameWire = !!inter.startWireId && target.wireId === inter.startWireId;
         const obstacles = st.doc.comps
           .filter((c) => c.kind !== 'text' && c.kind !== 'tunnel')
           .map((c) => rotatedBounds(c));
@@ -437,12 +454,12 @@ export default function Canvas() {
             });
         inter.points = pts;
         inter.targetPort = target.port && target.comp ? { compId: target.comp.id, portName: target.port.name } : null;
-        inter.invalid = sameAsStart;
+        inter.invalid = sameAsStart || sameWire;
         wiringRef.current = {
           points: pts,
           targetPort: inter.targetPort,
           startPort: inter.startPort,
-          invalid: sameAsStart,
+          invalid: inter.invalid,
         };
         invalidate();
         return;
@@ -500,6 +517,10 @@ export default function Canvas() {
             st.selectComp(comp.id);
             invalidate();
           }
+        } else if (!inter.moved && inter.startWireId) {
+          // No drag: this was a click on the segment, so select it.
+          st.selectWire(inter.startWireId);
+          invalidate();
         } else if (len > 0.5 && !inter.invalid) {
           st.addWirePath(pts);
         }
