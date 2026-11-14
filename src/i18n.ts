@@ -310,8 +310,6 @@ export const messages = {
     'aria.canvas': '电路画布',
     'aria.close': '关闭',
     'aria.runValue': '输入引脚的运行值',
-    'canvas.emptyTitle': '从元件库开始',
-    'canvas.emptyHint': '从左侧拖入元件，或按 ⌘K 搜索。',
   },
   en: {
     'common.cancel': 'Cancel',
@@ -622,8 +620,6 @@ export const messages = {
     'aria.canvas': 'Circuit canvas',
     'aria.close': 'Close',
     'aria.runValue': 'Input pin runtime value',
-    'canvas.emptyTitle': 'Start with a component',
-    'canvas.emptyHint': 'Drag a part in from the library, or press ⌘K to search.',
   },
 } as const;
 

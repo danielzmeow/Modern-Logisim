@@ -1,4 +1,4 @@
-import { useEffect, type CSSProperties } from 'react';
+import { useEffect } from 'react';
 import { useEditor, saveDocToStorage } from './editor/store';
 import { Topbar } from './ui/Topbar';
 import { Sidebar } from './ui/Sidebar';
@@ -11,18 +11,15 @@ import { Welcome } from './ui/Welcome';
 import { Toasts } from './ui/Toasts';
 import { ContextMenu } from './ui/ContextMenu';
 import { exportCircFile, openProject, saveProject } from './editor/fileActions';
-import { CircuitBoard, PanelLeft, PanelRight } from 'lucide-react';
+import { PanelLeft, PanelRight } from 'lucide-react';
 import { useT } from './ui/useT';
 import { useResolvedAppearance } from './ui/useResolvedAppearance';
-import { PALETTES } from './canvas/theme';
 
 export default function App() {
   const doc = useEditor((s) => s.doc);
   const sidebar = useEditor((s) => s.sidebar);
   const inspector = useEditor((s) => s.inspector);
   const welcomeClosed = useEditor((s) => s.welcomeClosed);
-  const pendingKind = useEditor((s) => s.pendingKind);
-  const canvasTheme = useEditor((s) => s.canvasTheme);
   const setSidebar = useEditor((s) => s.setSidebar);
   const setInspector = useEditor((s) => s.setInspector);
   const markSaved = useEditor((s) => s.markSaved);
@@ -128,31 +125,6 @@ export default function App() {
         <main className="relative min-w-0 flex-1">
           <Canvas />
           {showWelcome && <Welcome />}
-          {!showWelcome && !doc.comps.length && !doc.wires.length && !pendingKind && (
-            <div
-              className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center"
-              style={
-                {
-                  '--empty-text': PALETTES[canvasTheme].text,
-                  '--empty-muted': PALETTES[canvasTheme].muted,
-                  '--empty-chip': PALETTES[canvasTheme].chipFill,
-                  '--empty-line': PALETTES[canvasTheme].dot,
-                } as CSSProperties
-              }
-            >
-              <div className="flex max-w-[320px] flex-col items-center text-center">
-                <span className="mb-3 grid h-9 w-9 place-items-center rounded-xl border border-[var(--empty-line)] bg-[var(--empty-chip)] text-[var(--empty-muted)] shadow-[var(--shadow-card)]">
-                  <CircuitBoard size={17} strokeWidth={1.7} />
-                </span>
-                <div className="text-[12px] font-semibold text-[var(--empty-text)]">
-                  {t('canvas.emptyTitle')}
-                </div>
-                <div className="mt-1 text-[12px] leading-[1.6] text-[var(--empty-muted)]">
-                  {t('canvas.emptyHint')}
-                </div>
-              </div>
-            </div>
-          )}
           {!sidebar && !showWelcome && (
             <button
               className="absolute left-3 top-3 z-30 flex h-7 items-center gap-1.5 rounded-lg border border-[var(--line)] bg-[var(--surface-raised)]/90 px-2.5 text-[11px] font-medium text-[var(--text-secondary)] shadow-[var(--shadow-card)] backdrop-blur transition-colors hover:bg-[var(--card)] hover:text-[var(--text)]"
