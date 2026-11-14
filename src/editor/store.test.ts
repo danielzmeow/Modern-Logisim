@@ -65,3 +65,47 @@ describe('project import', () => {
     expect(imported.attrs.subPins).toHaveLength(2);
   });
 });
+
+describe('wires follow moved components', () => {
+  function docWithWire(): { doc: Doc; pin: ReturnType<typeof createComp>; out: ReturnType<typeof createComp> } {
+    const doc: Doc = { version: 1, name: 'move', comps: [], wires: [] };
+    const pin = createComp('input', { x: 0, y: 0 });
+    const out = createComp('output', { x: 100, y: 0 }, 'west');
+    doc.comps.push(pin, out);
+    doc.wires.push({ id: 'w', a: { x: 0, y: 0 }, b: { x: 100, y: 0 } });
+    return { doc, pin, out };
+  }
+
+  it('nudges the attached wire along with the component', () => {
+    const { doc, pin } = docWithWire();
+    useEditor.getState().loadDoc(doc);
+    useEditor.getState().selectComp(pin.id);
+    useEditor.getState().nudgeSelection(0, 40);
+
+    const wires = useEditor.getState().doc.wires;
+    const ends = wires.flatMap((w) => [w.a, w.b]);
+    expect(ends.some((p) => p.x === 0 && p.y === 40)).toBe(true);
+    expect(ends.some((p) => p.x === 100 && p.y === 0)).toBe(true);
+    for (const w of wires) expect(w.a.x === w.b.x || w.a.y === w.b.y).toBe(true);
+  });
+
+  it('keeps the wire attached when the inspector moves the component', () => {
+    const { doc, pin } = docWithWire();
+    useEditor.getState().loadDoc(doc);
+    useEditor.getState().updateCompGeom(pin.id, { at: { x: 20, y: 30 } });
+
+    const wires = useEditor.getState().doc.wires;
+    const ends = wires.flatMap((w) => [w.a, w.b]);
+    expect(ends.some((p) => p.x === 20 && p.y === 30)).toBe(true);
+    expect(ends.some((p) => p.x === 100 && p.y === 0)).toBe(true);
+  });
+
+  it('leaves the wire alone when only the facing changes', () => {
+    const { doc, pin } = docWithWire();
+    useEditor.getState().loadDoc(doc);
+    useEditor.getState().updateCompGeom(pin.id, { facing: 'west' });
+    expect(useEditor.getState().doc.wires).toEqual([
+      { id: 'w', a: { x: 0, y: 0 }, b: { x: 100, y: 0 } },
+    ]);
+  });
+});

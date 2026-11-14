@@ -17,6 +17,7 @@ import {
 import { buildNetlist } from '../model/netlist';
 import { computeSubLayout, syncSubLayouts } from '../model/hierarchy';
 import { createComp, uid } from '../model/specs';
+import { followMovedWires } from '../model/editing';
 import { sim } from '../model/sim';
 
 const DOC_KEY = 'logisim-studio.doc.v1';
@@ -755,8 +756,10 @@ export const useEditor = create<EditorState>((set, get) => ({
     if (!selComps.length) return;
     get().mutate(
       (d) => {
+        const moved = new Set(selComps);
+        d.wires = followMovedWires(d, moved, dx, dy);
         for (const c of d.comps) {
-          if (selComps.includes(c.id)) c.at = { x: c.at.x + dx, y: c.at.y + dy };
+          if (moved.has(c.id)) c.at = { x: c.at.x + dx, y: c.at.y + dy };
         }
       },
       { coalesce: 'nudge' },
@@ -788,7 +791,13 @@ export const useEditor = create<EditorState>((set, get) => ({
       (d) => {
         const c = d.comps.find((x) => x.id === id);
         if (!c) return;
-        if (patch.at) c.at = { x: Math.round(patch.at.x), y: Math.round(patch.at.y) };
+        if (patch.at) {
+          const at = { x: Math.round(patch.at.x), y: Math.round(patch.at.y) };
+          const dx = at.x - c.at.x;
+          const dy = at.y - c.at.y;
+          if (dx || dy) d.wires = followMovedWires(d, [id], dx, dy);
+          c.at = at;
+        }
         if (patch.facing) c.facing = patch.facing;
       },
       { coalesce: 'geom' },

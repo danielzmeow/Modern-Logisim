@@ -3,9 +3,10 @@ import { Simulator } from './sim';
 import { createComp } from './specs';
 import { computeSubLayout } from './hierarchy';
 import { portsOf } from './geometry';
-import type { ComponentInstance, Doc, Point } from './types';
+import { cloneDoc, type ComponentInstance, type Doc, type Point } from './types';
 import { buildTruthTable } from '../analysis/truthTable';
 import { synthesizeEquations } from '../analysis/equations';
+import { followMovedWires } from './editing';
 import { buildNetlist } from './netlist';
 
 const channels = new WeakMap<Doc, number>();
@@ -31,7 +32,10 @@ function port(comp: ComponentInstance, name: string): Point {
 
 function wirePoints(doc: Doc, points: Point[]) {
   for (let i = 1; i < points.length; i++) {
-    doc.wires.push({ id: `w${doc.wires.length}`, a: points[i - 1], b: points[i] });
+    const a = points[i - 1];
+    const b = points[i];
+    if (a.x === b.x && a.y === b.y) continue;
+    doc.wires.push({ id: `w${doc.wires.length}`, a, b });
   }
 }
 
@@ -335,5 +339,63 @@ describe('analysis tools', () => {
       });
       expect(drivers.length).toBeLessThanOrEqual(1);
     }
+  });
+});
+
+describe('wire following while moving components', () => {
+  function halfAdder(): { doc: Doc; a: ComponentInstance; and: ComponentInstance } {
+    const doc: Doc = { version: 1, name: 'half', comps: [], wires: [] };
+    const a = createComp('input', { x: 0, y: 0 });
+    a.attrs.label = 'A';
+    const b = createComp('input', { x: 0, y: 60 });
+    b.attrs.label = 'B';
+    const and = createComp('and', { x: 150, y: 0 }, 'east', 'en', { inputs: 2, size: 50, bits: 1 });
+    const out = createComp('output', { x: 280, y: 0 }, 'west');
+    out.attrs.label = 'Y';
+    doc.comps.push(a, b, and, out);
+    wirePoints(doc, [port(a, 'out'), { x: 100, y: 0 }, port(and, 'in0')]);
+    wirePoints(doc, [port(b, 'out'), { x: 100, y: 60 }, { x: 100, y: 20 }, port(and, 'in1')]);
+    wirePoints(doc, [port(and, 'out'), port(out, 'in')]);
+    return { doc, a, and };
+  }
+
+  it('keeps a moved gate wired to its inputs and output', () => {
+    const { doc, and } = halfAdder();
+    const before = cloneDoc(doc);
+    and.at = { x: and.at.x, y: and.at.y + 40 };
+    doc.wires = followMovedWires(before, [and.id], 0, 40);
+
+    // All wires stay orthogonal.
+    for (const w of doc.wires) {
+      expect(w.a.x === w.b.x || w.a.y === w.b.y).toBe(true);
+    }
+    // The gate's ports are still wire endpoints.
+    const ends = new Set(doc.wires.flatMap((w) => [`${w.a.x},${w.a.y}`, `${w.b.x},${w.b.y}`]));
+    for (const p of portsOf(and)) expect(ends.has(`${p.world.x},${p.world.y}`)).toBe(true);
+  });
+
+  it('leaves unrelated wires untouched', () => {
+    const { doc, a } = halfAdder();
+    const before = cloneDoc(doc);
+    const untouched = before.wires.filter(
+      (w) => `${w.a.x},${w.a.y}` !== `${port(a, 'out').x},${port(a, 'out').y}`,
+    );
+    a.at = { x: a.at.x + 20, y: a.at.y };
+    doc.wires = followMovedWires(before, [a.id], 20, 0);
+    for (const w of untouched) {
+      expect(doc.wires.some((x) => x.id === w.id && x.a.x === w.a.x && x.a.y === w.a.y && x.b.x === w.b.x && x.b.y === w.b.y)).toBe(true);
+    }
+  });
+
+  it('follows a diagonal move with an orthogonal detour', () => {
+    const { doc, and } = halfAdder();
+    const before = cloneDoc(doc);
+    and.at = { x: and.at.x + 30, y: and.at.y + 30 };
+    doc.wires = followMovedWires(before, [and.id], 30, 30);
+    for (const w of doc.wires) {
+      expect(w.a.x === w.b.x || w.a.y === w.b.y).toBe(true);
+    }
+    const ends = new Set(doc.wires.flatMap((w) => [`${w.a.x},${w.a.y}`, `${w.b.x},${w.b.y}`]));
+    for (const p of portsOf(and)) expect(ends.has(`${p.world.x},${p.world.y}`)).toBe(true);
   });
 });

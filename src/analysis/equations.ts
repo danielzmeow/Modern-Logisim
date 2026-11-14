@@ -1,6 +1,12 @@
 import type { ComponentInstance, Doc, Point } from '../model/types';
 import { createComp, uid } from '../model/specs';
-import { portsOf, rotatedBounds, type Bounds } from '../model/geometry';
+import {
+  collinearOverlap,
+  pointInsideSegment,
+  portsOf,
+  rotatedBounds,
+  type Bounds,
+} from '../model/geometry';
 
 type Expr =
   | { type: 'var'; name: string }
@@ -260,35 +266,6 @@ function segmentHitsBounds(p: Point, q: Point, r: Bounds, pad: number): boolean 
     return Math.max(p.x, q.x) > x0 && Math.min(p.x, q.x) < x1;
   }
   return false;
-}
-
-/** A point strictly inside a segment (endpoints excluded). */
-function pointInsideSegment(p: Point, a: Point, b: Point, eps = 0.6): boolean {
-  if (Math.abs(a.x - b.x) < eps) {
-    if (Math.abs(p.x - a.x) > eps) return false;
-    return p.y > Math.min(a.y, b.y) + eps && p.y < Math.max(a.y, b.y) - eps;
-  }
-  if (Math.abs(a.y - b.y) < eps) {
-    if (Math.abs(p.y - a.y) > eps) return false;
-    return p.x > Math.min(a.x, b.x) + eps && p.x < Math.max(a.x, b.x) - eps;
-  }
-  return false;
-}
-
-function collinearOverlap(a: Point, b: Point, c: Point, d: Point): number {
-  const abV = Math.abs(a.x - b.x) < 0.01;
-  const cdV = Math.abs(c.x - d.x) < 0.01;
-  if (abV && cdV && Math.abs(a.x - c.x) < 0.01) {
-    const lo = Math.max(Math.min(a.y, b.y), Math.min(c.y, d.y));
-    const hi = Math.min(Math.max(a.y, b.y), Math.max(c.y, d.y));
-    return Math.max(0, hi - lo);
-  }
-  if (!abV && !cdV && Math.abs(a.y - c.y) < 0.01) {
-    const lo = Math.max(Math.min(a.x, b.x), Math.min(c.x, d.x));
-    const hi = Math.min(Math.max(a.x, b.x), Math.max(c.x, d.x));
-    return Math.max(0, hi - lo);
-  }
-  return 0;
 }
 
 /** Drop repeated points and redundant middle points of a straight run. */

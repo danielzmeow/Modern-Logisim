@@ -27,6 +27,7 @@ import {
   type Hit,
 } from '../model/geometry';
 import { computeSubLayout } from '../model/hierarchy';
+import { followMovedWires } from '../model/editing';
 import { SPEC_BY_KIND, createComp } from '../model/specs';
 import { CanvasEmptyHint, CanvasToolbar } from '../ui/CanvasToolbar';
 
@@ -392,6 +393,7 @@ export default function Canvas() {
                 const o = inter.origin.get(c.id);
                 if (o) c.at = { x: o.x + dx, y: o.y + dy };
               }
+              d.wires = followMovedWires(inter.before, inter.origin.keys(), dx, dy);
             },
             { history: false },
           );

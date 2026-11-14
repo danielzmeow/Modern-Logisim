@@ -595,6 +595,36 @@ export function pointOnSegment(p: Point, a: Point, b: Point, eps = 0.5): boolean
   return false;
 }
 
+/** A point strictly inside an axis-aligned segment (endpoints excluded). */
+export function pointInsideSegment(p: Point, a: Point, b: Point, eps = 0.6): boolean {
+  if (Math.abs(a.x - b.x) < eps) {
+    if (Math.abs(p.x - a.x) > eps) return false;
+    return p.y > Math.min(a.y, b.y) + eps && p.y < Math.max(a.y, b.y) - eps;
+  }
+  if (Math.abs(a.y - b.y) < eps) {
+    if (Math.abs(p.y - a.y) > eps) return false;
+    return p.x > Math.min(a.x, b.x) + eps && p.x < Math.max(a.x, b.x) - eps;
+  }
+  return false;
+}
+
+/** Overlap length of two collinear axis-aligned segments (0 when apart). */
+export function collinearOverlap(a: Point, b: Point, c: Point, d: Point): number {
+  const abV = Math.abs(a.x - b.x) < 0.01;
+  const cdV = Math.abs(c.x - d.x) < 0.01;
+  if (abV && cdV && Math.abs(a.x - c.x) < 0.01) {
+    const lo = Math.max(Math.min(a.y, b.y), Math.min(c.y, d.y));
+    const hi = Math.min(Math.max(a.y, b.y), Math.max(c.y, d.y));
+    return Math.max(0, hi - lo);
+  }
+  if (!abV && !cdV && Math.abs(a.y - c.y) < 0.01) {
+    const lo = Math.max(Math.min(a.x, b.x), Math.min(c.x, d.x));
+    const hi = Math.min(Math.max(a.x, b.x), Math.max(c.x, d.x));
+    return Math.max(0, hi - lo);
+  }
+  return 0;
+}
+
 export function wireHit(wire: { a: Point; b: Point }, p: Point, width = 5): boolean {
   const dx = wire.b.x - wire.a.x;
   const dy = wire.b.y - wire.a.y;
@@ -731,24 +761,6 @@ function segmentHitsRect(a: Point, b: Point, r: Bounds, pad = 3): boolean {
     return hi > x0 && lo < x1;
   }
   return false;
-}
-
-function collinearOverlap(a: Point, b: Point, c: Point, d: Point): number {
-  const abVertical = Math.abs(a.x - b.x) < 0.01;
-  const cdVertical = Math.abs(c.x - d.x) < 0.01;
-  const abHorizontal = Math.abs(a.y - b.y) < 0.01;
-  const cdHorizontal = Math.abs(c.y - d.y) < 0.01;
-  if (abVertical && cdVertical && Math.abs(a.x - c.x) < 0.01) {
-    const lo = Math.max(Math.min(a.y, b.y), Math.min(c.y, d.y));
-    const hi = Math.min(Math.max(a.y, b.y), Math.max(c.y, d.y));
-    return Math.max(0, hi - lo);
-  }
-  if (abHorizontal && cdHorizontal && Math.abs(a.y - c.y) < 0.01) {
-    const lo = Math.max(Math.min(a.x, b.x), Math.min(c.x, d.x));
-    const hi = Math.min(Math.max(a.x, b.x), Math.max(c.x, d.x));
-    return Math.max(0, hi - lo);
-  }
-  return 0;
 }
 
 function scoreRoute(
