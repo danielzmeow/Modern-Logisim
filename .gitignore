@@ -1,0 +1,16 @@
+node_modules
+dist
+.DS_Store
+*.log
+*.tsbuildinfo
+.agent/
+.agents/
+.claude/
+.cursor/
+.dsh/
+.gemini/
+.impeccable/
+.hermes/
+.omp/
+.opencode/
+.pi/
