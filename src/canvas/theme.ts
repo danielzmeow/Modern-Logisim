@@ -7,6 +7,8 @@ export interface Palette {
   wireLow: string;
   wireHigh: string;
   wireBus: string;
+  wireZ: string;
+  wireError: string;
   chipFill: string;
   chipStroke: string;
   gateFill: string;
@@ -32,6 +34,8 @@ export const PALETTES: Record<CanvasTheme, Palette> = {
     wireLow: '#9aa6ba',
     wireHigh: '#0d9f74',
     wireBus: '#5b67e8',
+    wireZ: '#8b95a8',
+    wireError: '#e11d48',
     chipFill: '#ffffff',
     chipStroke: '#293044',
     gateFill: '#ffffff',
@@ -55,6 +59,8 @@ export const PALETTES: Record<CanvasTheme, Palette> = {
     wireLow: '#5a6984',
     wireHigh: '#2fe0a8',
     wireBus: '#93a2ff',
+    wireZ: '#6c7890',
+    wireError: '#fb7185',
     chipFill: '#121823',
     chipStroke: '#cbd4e6',
     gateFill: '#121823',

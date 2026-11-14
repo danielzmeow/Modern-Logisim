@@ -26,6 +26,7 @@ import {
   type Bounds,
   type Hit,
 } from '../model/geometry';
+import { computeSubLayout } from '../model/hierarchy';
 import { SPEC_BY_KIND, createComp } from '../model/specs';
 
 type Interaction =
@@ -152,6 +153,11 @@ export default function Canvas() {
       setView(z, { x: sx - wx * z, y: sy - wy * z });
     };
 
+    viewControls.centerWorld = () => {
+      const st = state();
+      const c = viewCenter();
+      return { x: (c.x - st.pan.x) / st.zoom, y: (c.y - st.pan.y) / st.zoom };
+    };
     viewControls.fit = fitView;
     viewControls.zoomIn = () => {
       const c = viewCenter();
@@ -332,8 +338,9 @@ export default function Canvas() {
         return;
       }
       if (hit?.type === 'wire') {
-        if (e.shiftKey || e.metaKey) st.selectWire(hit.wireId, true);
-        else st.selectWire(hit.wireId);
+        if (e.altKey) st.selectWireNet(hit.wireId, e.shiftKey || e.metaKey);
+        else st.selectWire(hit.wireId, e.shiftKey || e.metaKey);
+        st.setMenu(null);
         invalidate();
         return;
       }
@@ -588,16 +595,16 @@ export default function Canvas() {
       const hit = hitTest(st.doc.comps, st.doc.wires, world, 9 / st.zoom);
       if (hit?.type === 'port') {
         if (!st.selComps.includes(hit.comp.id)) st.selectComp(hit.comp.id);
-        st.setMenu({ x: e.clientX, y: e.clientY, target: 'comp' });
+        st.setMenu({ x: e.clientX, y: e.clientY, target: 'comp', world });
       } else if (hit?.type === 'comp') {
         if (!st.selComps.includes(hit.comp.id)) st.selectComp(hit.comp.id);
-        st.setMenu({ x: e.clientX, y: e.clientY, target: 'comp' });
+        st.setMenu({ x: e.clientX, y: e.clientY, target: 'comp', world });
       } else if (hit?.type === 'wire') {
         st.selectWire(hit.wireId);
-        st.setMenu({ x: e.clientX, y: e.clientY, target: 'wire' });
+        st.setMenu({ x: e.clientX, y: e.clientY, target: 'wire', wireId: hit.wireId, world });
       } else {
         st.clearSelection();
-        st.setMenu({ x: e.clientX, y: e.clientY, target: 'canvas' });
+        st.setMenu({ x: e.clientX, y: e.clientY, target: 'canvas', world });
       }
       invalidate();
     };
@@ -609,10 +616,24 @@ export default function Canvas() {
       }
     };
     const onDrop = (e: DragEvent) => {
-      const kind = e.dataTransfer?.getData('text/plain') as CompKind;
+      const text = e.dataTransfer?.getData('text/plain') ?? '';
+      const world = toWorld(e.clientX, e.clientY);
+      if (text.startsWith('sub:')) {
+        e.preventDefault();
+        const targetId = text.slice(4);
+        const target = state().circuits[targetId];
+        if (target) {
+          const layout = computeSubLayout(target);
+          const anchor = snapPoint({ x: world.x - layout.subW / 2, y: world.y - layout.subH / 2 });
+          state().addSubcircuit(targetId, anchor, placeFacingRef.current);
+          invalidate();
+        }
+        e.stopPropagation();
+        return;
+      }
+      const kind = text as CompKind;
       if (!kind || !SPEC_BY_KIND[kind]) return;
       e.preventDefault();
-      const world = toWorld(e.clientX, e.clientY);
       placeAt(kind, world, placeFacingRef.current);
       e.stopPropagation();
     };
@@ -845,7 +866,7 @@ export default function Canvas() {
       }
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       ctx.clearRect(0, 0, w, h);
-      sim.update(st.doc);
+      sim.update(st.doc, st.circuits);
       sim.frame(now, st.running);
       drawScene({
         ctx,

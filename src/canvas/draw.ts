@@ -184,7 +184,7 @@ function drawGate(ctx: CanvasRenderingContext2D, comp: ComponentInstance, g: Ret
   const kind = comp.kind;
 
   ctx.beginPath();
-  if (kind === 'not') {
+  if (kind === 'not' || kind === 'buffer') {
     ctx.moveTo(-30, -10);
     ctx.lineTo(-10, 0);
     ctx.lineTo(-30, 10);
@@ -219,9 +219,16 @@ function drawGate(ctx: CanvasRenderingContext2D, comp: ComponentInstance, g: Ret
     ctx.strokeStyle = pal.chipStroke;
     ctx.lineWidth = 1.4;
     ctx.stroke();
+  } else if (kind === 'buffer') {
+    ctx.beginPath();
+    ctx.moveTo(-10, 0);
+    ctx.lineTo(0, 0);
+    ctx.strokeStyle = pal.chipStroke;
+    ctx.lineWidth = 1.6;
+    ctx.stroke();
   }
 
-  if (kind === 'xor' || kind === 'xnor') {
+  if (kind === 'xor' || kind === 'xnor' || kind === 'odd' || kind === 'even') {
     ctx.beginPath();
     const bw = bodyRight - bodyLeft;
     const back = bodyLeft - 5;
@@ -243,7 +250,7 @@ function drawGate(ctx: CanvasRenderingContext2D, comp: ComponentInstance, g: Ret
   }
 
   // Input leads for curved gates.
-  if (kind === 'or' || kind === 'nor' || kind === 'xor' || kind === 'xnor') {
+  if (kind === 'or' || kind === 'nor' || kind === 'xor' || kind === 'xnor' || kind === 'odd' || kind === 'even') {
     ctx.strokeStyle = pal.chipStroke;
     ctx.lineWidth = 1.6;
     for (const p of g.ports) {
@@ -298,6 +305,34 @@ function drawPinBody(
   ctx.restore();
 }
 
+function chipBody(ctx: CanvasRenderingContext2D, g: ReturnType<typeof geom>, pal: Palette) {
+  roundedRect(ctx, g.x + 0.8, g.y + 0.8, g.w - 1.6, g.h - 1.6, 6);
+  ctx.fillStyle = pal.chipFill;
+  ctx.fill();
+  ctx.strokeStyle = pal.chipStroke;
+  ctx.lineWidth = 1.4;
+  ctx.stroke();
+}
+
+function chipText(
+  ctx: CanvasRenderingContext2D,
+  comp: ComponentInstance,
+  x: number,
+  y: number,
+  text: string,
+  color: string,
+  size = 8,
+  align: CanvasTextAlign = 'center',
+) {
+  ctx.save();
+  ctx.font = `600 ${size}px ${MONO}`;
+  ctx.fillStyle = color;
+  ctx.textAlign = align;
+  ctx.textBaseline = 'middle';
+  uprightText(ctx, comp, x, y, () => ctx.fillText(text, 0, 0));
+  ctx.restore();
+}
+
 function drawComponentInner(
   ctx: CanvasRenderingContext2D,
   comp: ComponentInstance,
@@ -319,16 +354,29 @@ function drawComponentInner(
     case 'constant': {
       const bits = kind === 'constant' ? g.ports[0]?.bits ?? 1 : g.ports[0]?.bits ?? 1;
       const netPort = kind === 'input' ? 'out' : 'in';
-      const sv = ghost ? { value: 0 } : sim.valueOfPort(comp.id, netPort);
+      const sv = ghost ? { value: 0, state: 'known' as const } : sim.valueOfPort(comp.id, netPort);
       let text: string;
       if (kind === 'constant') {
         text = formatValue(comp.attrs.value ?? 0, comp.attrs.bits ?? 8);
       } else if (kind === 'input') {
         text = formatValue(ghost ? 0 : sim.pinValue(comp.id), bits);
+      } else if (sv.state === 'e') {
+        text = 'E';
+      } else if (sv.state === 'z') {
+        text = 'Z';
       } else {
         text = formatValue(sv.value, bits);
       }
       drawPinBody(ctx, comp, g, pal, text, borderIsHigh(comp, sv.value, ghost), false);
+      if (kind === 'output' && sv.state !== 'known') {
+        ctx.save();
+        ctx.strokeStyle = sv.state === 'e' ? pal.wireError : pal.wireZ;
+        ctx.lineWidth = 1.4;
+        if (sv.state === 'z') ctx.setLineDash([3, 3]);
+        roundedRect(ctx, g.x + 1.1, g.y + 1.1, g.w - 2.2, g.h - 2.2, 5);
+        ctx.stroke();
+        ctx.restore();
+      }
       break;
     }
     case 'button': {
@@ -362,7 +410,7 @@ function drawComponentInner(
       break;
     }
     case 'led': {
-      const sv = ghost ? { value: 0 } : sim.valueOfPort(comp.id, 'in');
+      const sv = ghost ? { value: 0, state: 'known' as const } : sim.valueOfPort(comp.id, 'in');
       const on = sv.value !== 0;
       const color = LED_COLORS[comp.attrs.color ?? 'emerald'] ?? LED_COLORS.emerald;
       const cx = 10;
@@ -390,9 +438,12 @@ function drawComponentInner(
       }
       ctx.beginPath();
       ctx.arc(cx, cy, 6.6, 0, Math.PI * 2);
-      ctx.strokeStyle = on ? color : pal.chipStroke;
+      ctx.strokeStyle =
+        sv.state === 'e' ? pal.wireError : sv.state === 'z' ? pal.wireZ : on ? color : pal.chipStroke;
       ctx.lineWidth = 1.5;
+      if (sv.state === 'z') ctx.setLineDash([2, 2]);
       ctx.stroke();
+      ctx.setLineDash([]);
       if (on) {
         ctx.beginPath();
         ctx.arc(cx - 1.8, cy - 2, 1.7, 0, Math.PI * 2);
@@ -468,6 +519,270 @@ function drawComponentInner(
       ctx.fillStyle = pal.muted;
       uprightText(ctx, comp, -16, h / 2 - 2.5, () => ctx.fillText('S', 0, 0));
       ctx.restore();
+      break;
+    }
+    case 'probe': {
+      const sv = ghost ? { value: 0, state: 'known' as const } : sim.valueOfPort(comp.id, 'in');
+      const text =
+        sv.state === 'e'
+          ? 'E'
+          : sv.state === 'z'
+            ? 'Z'
+            : formatValue(sv.value, comp.attrs.bits ?? 1);
+      drawPinBody(ctx, comp, g, pal, text, sv.state === 'known' && sv.value !== 0, false);
+      if (sv.state === 'e' || sv.state === 'z') {
+        ctx.save();
+        ctx.strokeStyle = sv.state === 'e' ? pal.wireError : pal.wireZ;
+        ctx.lineWidth = 1.3;
+        if (sv.state === 'z') ctx.setLineDash([3, 3]);
+        roundedRect(ctx, g.x + 1.2, g.y + 1.2, g.w - 2.4, g.h - 2.4, 5);
+        ctx.stroke();
+        ctx.restore();
+      }
+      break;
+    }
+    case 'power': {
+      ctx.strokeStyle = pal.wireHigh;
+      ctx.lineWidth = 1.8;
+      ctx.beginPath();
+      ctx.moveTo(0, 0);
+      ctx.lineTo(0, -12);
+      ctx.moveTo(-6, -12);
+      ctx.lineTo(6, -12);
+      ctx.stroke();
+      chipText(ctx, comp, 9, -17, '+', pal.wireHigh, 8);
+      break;
+    }
+    case 'ground': {
+      ctx.strokeStyle = pal.muted;
+      ctx.lineWidth = 1.8;
+      ctx.beginPath();
+      ctx.moveTo(0, 0);
+      ctx.lineTo(0, -10);
+      ctx.moveTo(-7, -10);
+      ctx.lineTo(7, -10);
+      ctx.moveTo(-4.5, -14);
+      ctx.lineTo(4.5, -14);
+      ctx.moveTo(-2, -18);
+      ctx.lineTo(2, -18);
+      ctx.stroke();
+      break;
+    }
+    case 'pull': {
+      chipBody(ctx, g, pal);
+      const up = (comp.attrs.pull ?? 0) === 1;
+      ctx.strokeStyle = up ? pal.wireHigh : pal.wireLow;
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(18, up ? 5 : -5);
+      ctx.lineTo(18, up ? -4 : 4);
+      ctx.moveTo(15, up ? -1 : 1);
+      ctx.lineTo(18, up ? -4 : 4);
+      ctx.lineTo(21, up ? -1 : 1);
+      ctx.stroke();
+      chipText(ctx, comp, 9, 0, up ? '1' : '0', pal.muted, 8);
+      break;
+    }
+    case 'extend': {
+      const inBits = Math.max(1, Math.min(32, comp.attrs.inBits ?? 4));
+      const outBits = Math.max(1, Math.min(32, comp.attrs.outBits ?? 8));
+      chipBody(ctx, g, pal);
+      chipText(ctx, comp, -15, -2, `${inBits}→${outBits}`, pal.muted, 7);
+      chipText(ctx, comp, -15, 7, comp.attrs.sign ? 'S' : '0', pal.faint, 6.5);
+      break;
+    }
+    case 'ctrlBuffer':
+    case 'ctrlInverter': {
+      const enabled = ghost ? false : sim.valueOfPort(comp.id, 'enable').state === 'known' && sim.valueOfPort(comp.id, 'enable').value !== 0;
+      ctx.beginPath();
+      ctx.moveTo(-32, -16);
+      ctx.lineTo(-2, 0);
+      ctx.lineTo(-32, 16);
+      ctx.closePath();
+      ctx.fillStyle = pal.gateFill;
+      ctx.fill();
+      ctx.strokeStyle = pal.chipStroke;
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(-40, -6);
+      ctx.lineTo(-32, -6);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(-40, 12);
+      ctx.lineTo(-24, 12);
+      ctx.stroke();
+      if (comp.kind === 'ctrlInverter') {
+        ctx.beginPath();
+        ctx.arc(3, 0, 4.5, 0, Math.PI * 2);
+        ctx.fillStyle = pal.gateFill;
+        ctx.fill();
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(7.5, 0);
+        ctx.lineTo(14, 0);
+        ctx.stroke();
+      } else {
+        ctx.beginPath();
+        ctx.moveTo(-2, 0);
+        ctx.lineTo(14, 0);
+        ctx.stroke();
+      }
+      chipText(ctx, comp, -29, 11, 'EN', pal.faint, 6.5, 'center');
+      if (!enabled) chipText(ctx, comp, -17, 0, 'Z', pal.wireZ, 7);
+      break;
+    }
+    case 'register': {
+      chipBody(ctx, g, pal);
+      const q = ghost ? { value: 0 } : sim.valueOfPort(comp.id, 'q');
+      chipText(ctx, comp, -34, -14, 'REG', pal.faint, 7, 'left');
+      chipText(ctx, comp, -34, 0, 'D', pal.muted, 7, 'left');
+      chipText(ctx, comp, -6, -14, comp.attrs.trigger === 'falling' ? '▾' : '▴', pal.muted, 7, 'right');
+      chipText(ctx, comp, -6, 0, formatValue(q.value, comp.attrs.bits ?? 8), q.value ? pal.wireHigh : pal.muted, 7, 'right');
+      if (comp.attrs.enable !== false) chipText(ctx, comp, -15, 25, 'EN', pal.faint, 6, 'center');
+      if (comp.attrs.reset !== false) chipText(ctx, comp, 5, 25, 'R', pal.faint, 6, 'center');
+      break;
+    }
+    case 'counter': {
+      chipBody(ctx, g, pal);
+      const q = ghost ? { value: 0 } : sim.valueOfPort(comp.id, 'q');
+      chipText(ctx, comp, -34, -12, 'CNT', pal.faint, 7, 'left');
+      chipText(ctx, comp, -6, -12, (comp.attrs.count ?? 'up') === 'down' ? '−' : '+', pal.muted, 7, 'right');
+      chipText(ctx, comp, -6, 1, formatValue(q.value, comp.attrs.bits ?? 8), q.value ? pal.wireHigh : pal.muted, 7, 'right');
+      chipText(ctx, comp, -6, 11, 'C', pal.faint, 6, 'right');
+      if (comp.attrs.enable !== false) chipText(ctx, comp, -30, 15, 'EN', pal.faint, 5.5, 'left');
+      break;
+    }
+    case 'ram':
+    case 'rom': {
+      chipBody(ctx, g, pal);
+      const isRam = comp.kind === 'ram';
+      chipText(ctx, comp, -35, -22, isRam ? 'RAM' : 'ROM', pal.faint, 8, 'left');
+      chipText(ctx, comp, -35, -10, `A${comp.attrs.addrBits ?? 4}`, pal.muted, 7, 'left');
+      chipText(ctx, comp, -35, 3, `D${comp.attrs.dataBits ?? 8}`, pal.muted, 7, 'left');
+      const sv = ghost ? { value: 0 } : sim.valueOfPort(comp.id, 'dout');
+      chipText(ctx, comp, -34, 18, formatValue(sv.value, comp.attrs.dataBits ?? 8), sv.value ? pal.wireHigh : pal.muted, 7, 'left');
+      if (isRam) {
+        chipText(ctx, comp, -38, 28, 'WE', pal.faint, 5.5, 'left');
+        chipText(ctx, comp, -8, 28, '▴', pal.faint, 5.5, 'right');
+      }
+      break;
+    }
+    case 'decoder':
+    case 'demux':
+    case 'priority':
+    case 'bitSelect': {
+      chipBody(ctx, g, pal);
+      const title =
+        comp.kind === 'decoder' ? 'DEC' : comp.kind === 'demux' ? 'DEMUX' : comp.kind === 'priority' ? 'PRI' : 'BIT';
+      chipText(ctx, comp, -20, 0, title, pal.faint, comp.kind === 'demux' ? 6 : 7);
+      if (comp.kind === 'bitSelect') {
+        chipText(ctx, comp, -20, 10, `S${comp.attrs.fans ?? 2}`, pal.faint, 6);
+      }
+      if (comp.kind === 'decoder' && comp.attrs.enable) chipText(ctx, comp, -20, -24, 'EN', pal.faint, 6);
+      break;
+    }
+    case 'adder':
+    case 'subtractor':
+    case 'multiplier':
+    case 'comparator':
+    case 'shifter': {
+      chipBody(ctx, g, pal);
+      const outPort = comp.kind === 'comparator' ? 'eq' : 'out';
+      const sv = ghost ? { value: 0 } : sim.valueOfPort(comp.id, outPort);
+      const title =
+        comp.kind === 'adder' ? '+' : comp.kind === 'subtractor' ? '−' : comp.kind === 'multiplier' ? '×' : comp.kind === 'comparator' ? 'CMP' : '≪';
+      chipText(ctx, comp, -30, -14, title, pal.faint, comp.kind === 'comparator' ? 7 : 11, 'left');
+      if (comp.kind === 'comparator') {
+        chipText(ctx, comp, -5, -10, '>', pal.muted, 6, 'right');
+        chipText(ctx, comp, -5, 0, '=', pal.muted, 6, 'right');
+        chipText(ctx, comp, -5, 10, '<', pal.muted, 6, 'right');
+      } else {
+        chipText(ctx, comp, -6, 14, formatValue(sv.value, comp.kind === 'multiplier' ? Math.max(1, Math.min(32, (comp.attrs.bits ?? 8) * 2)) : comp.attrs.bits ?? 8), sv.value ? pal.wireHigh : pal.muted, 7, 'right');
+      }
+      if (comp.kind === 'shifter') chipText(ctx, comp, -30, 12, comp.attrs.shift === 'left' ? '≪' : comp.attrs.shift === 'arithmetic' ? '⩾' : '≫', pal.faint, 6, 'left');
+      break;
+    }
+    case 'sevenseg': {
+      const sv = ghost ? { value: 0, state: 'known' as const } : sim.valueOfPort(comp.id, 'in');
+      const value = sv.value & 0xf;
+      const color = LED_COLORS[comp.attrs.color ?? 'rose'] ?? LED_COLORS.rose;
+      ctx.beginPath();
+      ctx.moveTo(0, 0);
+      ctx.lineTo(4, 0);
+      ctx.strokeStyle = pal.muted;
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+      roundedRect(ctx, 4, -30, 34, 60, 6);
+      ctx.fillStyle = pal.ledOff;
+      ctx.fill();
+      ctx.strokeStyle = pal.chipStroke;
+      ctx.lineWidth = 1.3;
+      ctx.stroke();
+      const segs: Record<string, string[]> = {
+        '0': ['a', 'b', 'c', 'd', 'e', 'f'],
+        '1': ['b', 'c'],
+        '2': ['a', 'b', 'g', 'e', 'd'],
+        '3': ['a', 'b', 'g', 'c', 'd'],
+        '4': ['f', 'g', 'b', 'c'],
+        '5': ['a', 'f', 'g', 'c', 'd'],
+        '6': ['a', 'f', 'g', 'e', 'c', 'd'],
+        '7': ['a', 'b', 'c'],
+        '8': ['a', 'b', 'c', 'd', 'e', 'f', 'g'],
+        '9': ['a', 'b', 'c', 'd', 'f', 'g'],
+        a: ['a', 'b', 'c', 'e', 'f', 'g'],
+        b: ['c', 'd', 'e', 'f', 'g'],
+        c: ['a', 'd', 'e', 'f'],
+        d: ['b', 'c', 'd', 'e', 'g'],
+        e: ['a', 'd', 'e', 'f', 'g'],
+        f: ['a', 'e', 'f', 'g'],
+      };
+      const active = new Set(segs[value.toString(16)] ?? []);
+      const paths: Record<string, [number, number, number, number]> = {
+        a: [8, -24, 28, -24],
+        b: [31, -21, 31, -3],
+        c: [31, 3, 31, 21],
+        d: [8, 24, 28, 24],
+        e: [7, 3, 7, 21],
+        f: [7, -21, 7, -3],
+        g: [8, 0, 28, 0],
+      };
+      for (const [name, [x1, y1, x2, y2]] of Object.entries(paths)) {
+        ctx.beginPath();
+        ctx.moveTo(x1, y1);
+        ctx.lineTo(x2, y2);
+        ctx.lineCap = 'round';
+        ctx.lineWidth = 3;
+        ctx.strokeStyle = active.has(name) ? color : pal.chipStroke;
+        ctx.globalAlpha = active.has(name) ? 1 : 0.18;
+        if (active.has(name)) {
+          ctx.save();
+          ctx.shadowColor = color;
+          ctx.shadowBlur = 5;
+          ctx.stroke();
+          ctx.restore();
+        }
+        ctx.stroke();
+        ctx.globalAlpha = 1;
+      }
+      break;
+    }
+    case 'sub': {
+      roundedRect(ctx, g.x + 0.5, g.y + 0.5, g.w - 1, g.h - 1, 7);
+      ctx.fillStyle = pal.chipFill;
+      ctx.fill();
+      ctx.strokeStyle = pal.accent;
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+      ctx.fillStyle = pal.accentSoft;
+      ctx.beginPath();
+      ctx.rect(g.x + 3, g.y + 3, g.w - 6, 15);
+      ctx.fill();
+      chipText(ctx, comp, g.w / 2, 10, comp.attrs.circuitName || comp.attrs.circuit || 'SUB', pal.accent, 8);
+      for (const p of g.ports) {
+        const x = p.dir === 'in' ? p.local.x + 5 : p.local.x - 5;
+        chipText(ctx, comp, x, p.local.y, p.label || '', pal.muted, 6.5, p.dir === 'in' ? 'left' : 'right');
+      }
       break;
     }
     case 'split':
@@ -627,13 +942,36 @@ export function drawScene(opts: SceneOptions) {
     if (!visible) continue;
     const sv = sim.valueOfWire(i);
     const bus = sv.width > 1;
-    const color = bus ? pal2.wireBus : sv.value !== 0 ? pal2.wireHigh : pal2.wireLow;
+    const color =
+      sv.state === 'e'
+        ? pal2.wireError
+        : sv.state === 'z'
+          ? pal2.wireZ
+          : bus
+            ? pal2.wireBus
+            : sv.value !== 0
+              ? pal2.wireHigh
+              : pal2.wireLow;
     ctx.strokeStyle = color;
     ctx.lineWidth = bus ? 2.9 : 2.1;
+    if (sv.state !== 'known') ctx.setLineDash(sv.state === 'z' ? [4, 4] : [2, 3]);
     ctx.beginPath();
     ctx.moveTo(w.a.x, w.a.y);
     ctx.lineTo(w.b.x, w.b.y);
     ctx.stroke();
+    ctx.setLineDash([]);
+
+    if ((sv.state === 'e' || sv.state === 'z') && zoom >= 0.65) {
+      const mx = (w.a.x + w.b.x) / 2;
+      const my = (w.a.y + w.b.y) / 2;
+      ctx.save();
+      ctx.font = `700 8px ${MONO}`;
+      ctx.fillStyle = color;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(sv.state === 'e' ? 'E' : 'Z', mx, my);
+      ctx.restore();
+    }
 
     if (bus && zoom >= 0.65) {
       const len = Math.hypot(w.b.x - w.a.x, w.b.y - w.a.y);
@@ -755,8 +1093,13 @@ export function drawScene(opts: SceneOptions) {
 
     // ports
     if (zoom >= 0.55) {
+      const alwaysPins = [
+        'sub', 'ram', 'rom', 'decoder', 'demux', 'priority', 'bitSelect',
+        'register', 'counter', 'adder', 'subtractor', 'multiplier', 'comparator',
+        'shifter', 'sevenseg', 'ctrlBuffer', 'ctrlInverter',
+      ].includes(comp.kind);
       const showPorts =
-        isHover || isSel || opts.selComps.length > 0 || opts.hover?.type === 'port' || zoom >= 1.35;
+        isHover || isSel || alwaysPins || opts.selComps.length > 0 || opts.hover?.type === 'port' || zoom >= 1.35;
       for (const p of portsOf(comp)) {
         const hovered =
           opts.hover?.type === 'port' && opts.hover.comp.id === comp.id && opts.hover.port.name === p.name;
@@ -872,7 +1215,14 @@ export function drawScene(opts: SceneOptions) {
     if (idx >= 0) {
       const w = doc.wires[idx];
       const sv = sim.valueOfWire(idx);
-      const value = sv.width > 1 ? `${formatValue(sv.value, sv.width)} · ${sv.width} bit` : `${sv.value & 1}`;
+      const value =
+        sv.state === 'e'
+          ? `E · ${sv.width} bit`
+          : sv.state === 'z'
+            ? `Z · ${sv.width} bit`
+            : sv.width > 1
+              ? `${formatValue(sv.value, sv.width)} · ${sv.width} bit`
+              : `${sv.value & 1}`;
       const mx = (w.a.x + w.b.x) / 2;
       const my = (w.a.y + w.b.y) / 2;
       ctx.save();
