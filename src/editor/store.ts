@@ -15,6 +15,7 @@ import {
   rotateFacing,
 } from '../model/types';
 import { buildNetlist } from '../model/netlist';
+import { computeSubLayout, syncSubLayouts } from '../model/hierarchy';
 import { createComp, uid } from '../model/specs';
 import { sim } from '../model/sim';
 
@@ -78,16 +79,58 @@ function loadPrefs(): Prefs {
   };
 }
 
-export function loadSavedDoc(): Doc | null {
+export interface ProjectData {
+  current: string;
+  circuits: Record<string, Doc>;
+  order: string[];
+}
+
+function validDoc(d: unknown): d is Doc {
+  const doc = d as Doc | null;
+  return !!doc && Array.isArray(doc.comps) && Array.isArray(doc.wires);
+}
+
+function projectFromDoc(doc: Doc): ProjectData {
+  const id = uid('cir');
+  return { current: id, circuits: { [id]: doc }, order: [id] };
+}
+
+export function loadSavedProject(): ProjectData | null {
   try {
     const raw = localStorage.getItem(DOC_KEY);
     if (!raw) return null;
-    const d = JSON.parse(raw);
-    if (!d || !Array.isArray(d.comps) || !Array.isArray(d.wires)) return null;
-    return d as Doc;
+    const parsed = JSON.parse(raw) as
+      | (Partial<ProjectData> & { circuits?: unknown })
+      | Doc
+      | { doc?: Doc };
+    if (validDoc(parsed)) return projectFromDoc(parsed);
+    if (parsed && validDoc((parsed as { doc?: Doc }).doc)) {
+      return projectFromDoc((parsed as { doc: Doc }).doc);
+    }
+    const p = parsed as Partial<ProjectData>;
+    if (p && p.circuits && typeof p.circuits === 'object') {
+      const circuits: Record<string, Doc> = {};
+      const order: string[] = [];
+      for (const [id, doc] of Object.entries(p.circuits as Record<string, Doc>)) {
+        if (validDoc(doc)) {
+          circuits[id] = doc;
+          order.push(id);
+        }
+      }
+      if (order.length) {
+        const current = p.current && circuits[p.current] ? p.current : order[0];
+        return { current, circuits, order };
+      }
+    }
   } catch {
-    return null;
+    /* ignore */
   }
+  return null;
+}
+
+export function loadSavedDoc(): Doc | null {
+  const p = loadSavedProject();
+  return p ? p.circuits[p.current] ?? null : null;
 }
 
 export function hasSavedDoc(): boolean {
@@ -98,9 +141,9 @@ export function hasSavedDoc(): boolean {
   }
 }
 
-export function saveDocToStorage(doc: Doc) {
+export function saveProjectToStorage(project: ProjectData) {
   try {
-    localStorage.setItem(DOC_KEY, JSON.stringify(doc));
+    localStorage.setItem(DOC_KEY, JSON.stringify({ version: 2, ...project }));
     localStorage.setItem(DOC_KEY + '.at', String(Date.now()));
   } catch {
     /* ignore */
@@ -116,6 +159,9 @@ export interface Toast {
 
 interface EditorState {
   doc: Doc;
+  circuits: Record<string, Doc>;
+  circuitOrder: string[];
+  currentCircuit: string;
   past: Doc[];
   future: Doc[];
   selComps: string[];
@@ -133,25 +179,35 @@ interface EditorState {
   inspector: boolean;
   paletteOpen: boolean;
   shortcutsOpen: boolean;
+  truthOpen: boolean;
+  truthFocus: string | null;
+  equationOpen: boolean;
   welcomeClosed: boolean;
   toast: Toast | null;
   lastSaved: number;
   cursorWorld: Point | null;
   simTick: number;
-  menu: { x: number; y: number; target: 'comp' | 'wire' | 'canvas' } | null;
+  menu: { x: number; y: number; target: 'comp' | 'wire' | 'canvas'; wireId?: string; world?: Point } | null;
   dragMode: null | 'move' | 'wire' | 'marquee' | 'pan';
   coalesceKey: string;
   coalesceAt: number;
 
   setName: (name: string) => void;
   loadDoc: (doc: Doc, opts?: { welcomeClosed?: boolean }) => void;
+  loadProject: (project: ProjectData) => void;
   newDoc: () => void;
+  snapshotProject: () => ProjectData;
   mutate: (fn: (draft: Doc) => void, opts?: { history?: boolean; coalesce?: string }) => void;
   commitSnapshot: (before: Doc) => void;
   undo: () => void;
   redo: () => void;
   canUndo: () => boolean;
   canRedo: () => boolean;
+
+  switchCircuit: (id: string) => void;
+  createCircuit: (name?: string, doc?: Doc) => string;
+  deleteCircuit: (id: string) => void;
+  addSubcircuit: (targetId: string, at: Point, facing?: ComponentInstance['facing']) => ComponentInstance | null;
 
   setTool: (tool: Tool) => void;
   setPendingKind: (kind: CompKind | null) => void;
@@ -166,6 +222,8 @@ interface EditorState {
   setInspector: (v: boolean) => void;
   setPaletteOpen: (v: boolean) => void;
   setShortcutsOpen: (v: boolean) => void;
+  setTruthOpen: (v: boolean, focus?: string | null) => void;
+  setEquationOpen: (v: boolean) => void;
   setWelcomeClosed: (v: boolean) => void;
   setDragMode: (m: EditorState['dragMode']) => void;
   setCursorWorld: (p: Point | null) => void;
@@ -177,15 +235,17 @@ interface EditorState {
 
   select: (comps: string[], wires: string[], additive?: boolean) => void;
   selectComp: (id: string, additive?: boolean) => void;
-  selectWire: (wireId: string, additive?: boolean) => void;
+  selectWire: (wireId: string, additive?: boolean, wholeNet?: boolean) => void;
+  selectWireNet: (wireId: string, additive?: boolean) => void;
   selectAll: () => void;
   clearSelection: () => void;
   deleteSelection: () => void;
   duplicateSelection: () => void;
   rotateSelection: (steps: number) => void;
   nudgeSelection: (dx: number, dy: number) => void;
+  splitWire: (wireId: string, at: Point) => void;
 
-  addComp: (kind: CompKind, at: Point, facing?: ComponentInstance['facing']) => ComponentInstance;
+  addComp: (kind: CompKind, at: Point, facing?: ComponentInstance['facing'], attrs?: Partial<CompAttrs>) => ComponentInstance;
   updateComp: (id: string, attrs: Partial<CompAttrs>, coalesce?: string) => void;
   updateCompGeom: (id: string, patch: { at?: Point; facing?: ComponentInstance['facing'] }) => void;
   addWirePath: (points: Point[]) => string[];
@@ -194,10 +254,36 @@ interface EditorState {
 }
 
 const prefs = loadPrefs();
-const saved = loadSavedDoc();
+const savedProject = loadSavedProject();
+const initialDoc = savedProject?.circuits[savedProject.current] ?? emptyDoc(tr(prefs.lang, 'doc.untitled'));
+const initialCircuits = savedProject
+  ? Object.fromEntries(Object.entries(savedProject.circuits).map(([id, d]) => [id, cloneDoc(d)]))
+  : { main: cloneDoc(initialDoc) };
+const initialOrder = savedProject
+  ? Array.from(new Set([...savedProject.order, ...Object.keys(savedProject.circuits)])).filter(
+      (id) => !!savedProject.circuits[id],
+    )
+  : ['main'];
+const initialCurrent = savedProject?.current && initialCircuits[savedProject.current]
+  ? savedProject.current
+  : initialOrder[0] ?? 'main';
+
+/** Recompute subcircuit symbol layouts after any edit. */
+function normalizeProject(circuits: Record<string, Doc>): Record<string, Doc> {
+  const out: Record<string, Doc> = { ...circuits };
+  for (const id of Object.keys(out)) {
+    out[id] = syncSubLayouts(out[id], out);
+  }
+  return out;
+}
+
+const initialNormalized = normalizeProject(initialCircuits);
 
 export const useEditor = create<EditorState>((set, get) => ({
-  doc: saved ?? emptyDoc(tr(prefs.lang, 'doc.untitled')),
+  doc: cloneDoc(initialNormalized[initialCurrent] ?? initialDoc),
+  circuits: initialNormalized,
+  circuitOrder: initialOrder,
+  currentCircuit: initialCurrent,
   past: [],
   future: [],
   selComps: [],
@@ -215,8 +301,13 @@ export const useEditor = create<EditorState>((set, get) => ({
   inspector: prefs.inspector,
   paletteOpen: false,
   shortcutsOpen: false,
+  truthOpen: false,
+  truthFocus: null,
+  equationOpen: false,
   welcomeClosed:
-    welcomeSeen() || (!!saved && (saved.comps.length > 0 || saved.wires.length > 0)),
+    welcomeSeen() ||
+    (!!savedProject &&
+      Object.values(savedProject.circuits).some((d) => d.comps.length > 0 || d.wires.length > 0)),
   toast: null,
   lastSaved: 0,
   cursorWorld: null,
@@ -226,26 +317,90 @@ export const useEditor = create<EditorState>((set, get) => ({
   coalesceKey: '',
   coalesceAt: 0,
 
-  setName: (name) => set((s) => ({ doc: { ...s.doc, name } })),
+  snapshotProject: () => {
+    const s = get();
+    // Capture RAM contents written during simulation into the saved snapshot.
+    const currentDoc: Doc = {
+      ...s.doc,
+      comps: s.doc.comps.map((comp) => {
+        if (comp.kind !== 'ram' && comp.kind !== 'rom') return comp;
+        if (sim.netOfPort(comp.id, 'dout') < 0) return comp;
+        return { ...comp, attrs: { ...comp.attrs, memory: sim.memoryValues(comp) } };
+      }),
+    };
+    return {
+      current: s.currentCircuit,
+      circuits: { ...s.circuits, [s.currentCircuit]: currentDoc },
+      order: s.circuitOrder,
+    };
+  },
+
+  setName: (name) => {
+    const s = get();
+    const circuits = {
+      ...s.circuits,
+      [s.currentCircuit]: { ...s.doc, name },
+    };
+    const normalized = normalizeProject(circuits);
+    set({ doc: normalized[s.currentCircuit], circuits: normalized });
+  },
 
   loadDoc: (doc, opts) => {
     const closed = opts?.welcomeClosed ?? true;
     if (closed) setWelcomeSeen(true);
-    set((s) => ({
-      doc: cloneDoc(doc),
+    const project = projectFromDoc(cloneDoc(doc));
+    set({
+      doc: project.circuits[project.current],
+      circuits: project.circuits,
+      circuitOrder: project.order,
+      currentCircuit: project.current,
       past: [],
       future: [],
       selComps: [],
       selWires: [],
       welcomeClosed: closed,
-      toast: s.toast,
-    }));
+    });
+    sim.reset();
+  },
+
+  loadProject: (project) => {
+    setWelcomeSeen(true);
+    const circuits: Record<string, Doc> = {};
+    for (const [id, doc] of Object.entries(project.circuits)) {
+      if (validDoc(doc)) circuits[id] = cloneDoc(doc);
+    }
+    let order = Array.from(new Set(project.order.filter((id) => circuits[id])));
+    for (const id of Object.keys(circuits)) if (!order.includes(id)) order.push(id);
+    if (!order.length) order = Object.keys(circuits);
+    if (!order.length) {
+      get().toastMsg(tr(get().lang, 'file.invalidProject'), 'error');
+      return;
+    }
+    const current = circuits[project.current] ? project.current : order[0];
+    const normalized = normalizeProject(circuits);
+    set({
+      doc: normalized[current],
+      circuits: normalized,
+      circuitOrder: order,
+      currentCircuit: current,
+      past: [],
+      future: [],
+      selComps: [],
+      selWires: [],
+      welcomeClosed: true,
+      running: false,
+    });
+    sim.reset();
   },
 
   newDoc: () => {
     setWelcomeSeen(true);
+    const project = projectFromDoc(emptyDoc(tr(get().lang, 'doc.untitled')));
     set({
-      doc: emptyDoc(tr(get().lang, 'doc.untitled')),
+      doc: project.circuits[project.current],
+      circuits: project.circuits,
+      circuitOrder: project.order,
+      currentCircuit: project.current,
       past: [],
       future: [],
       selComps: [],
@@ -257,7 +412,7 @@ export const useEditor = create<EditorState>((set, get) => ({
   },
 
   mutate: (fn, opts = {}) => {
-    const { doc, past, future, coalesceKey, coalesceAt } = get();
+    const { doc, past, future, coalesceKey, coalesceAt, circuits, currentCircuit } = get();
     const next = cloneDoc(doc);
     fn(next);
     let nextPast = past;
@@ -276,8 +431,10 @@ export const useEditor = create<EditorState>((set, get) => ({
       nextKey = key ?? '';
       nextAt = now;
     }
+    const nextCircuits = normalizeProject({ ...circuits, [currentCircuit]: next });
     set({
-      doc: next,
+      doc: nextCircuits[currentCircuit],
+      circuits: nextCircuits,
       past: nextPast,
       future: nextFuture,
       coalesceKey: nextKey,
@@ -297,11 +454,13 @@ export const useEditor = create<EditorState>((set, get) => ({
   },
 
   undo: () => {
-    const { past, doc, future } = get();
+    const { past, doc, future, circuits, currentCircuit } = get();
     if (!past.length) return;
     const prev = past[past.length - 1];
+    const nextCircuits = normalizeProject({ ...circuits, [currentCircuit]: prev });
     set((s) => ({
-      doc: prev,
+      doc: nextCircuits[currentCircuit],
+      circuits: nextCircuits,
       past: past.slice(0, -1),
       future: [...future, cloneDoc(doc)],
       selComps: s.selComps.filter((id) => prev.comps.some((c) => c.id === id)),
@@ -310,11 +469,13 @@ export const useEditor = create<EditorState>((set, get) => ({
   },
 
   redo: () => {
-    const { past, doc, future } = get();
+    const { past, doc, future, circuits, currentCircuit } = get();
     if (!future.length) return;
     const next = future[future.length - 1];
+    const nextCircuits = normalizeProject({ ...circuits, [currentCircuit]: next });
     set((s) => ({
-      doc: next,
+      doc: nextCircuits[currentCircuit],
+      circuits: nextCircuits,
       past: [...past, cloneDoc(doc)],
       future: future.slice(0, -1),
       selComps: s.selComps.filter((id) => next.comps.some((c) => c.id === id)),
@@ -325,6 +486,97 @@ export const useEditor = create<EditorState>((set, get) => ({
   canUndo: () => get().past.length > 0,
   canRedo: () => get().future.length > 0,
 
+  switchCircuit: (id) => {
+    const s = get();
+    if (id === s.currentCircuit || !s.circuits[id]) return;
+    const circuits = normalizeProject({ ...s.circuits, [s.currentCircuit]: s.doc });
+    const nextDoc = cloneDoc(circuits[id]);
+    circuits[id] = nextDoc;
+    set({
+      doc: nextDoc,
+      circuits,
+      currentCircuit: id,
+      past: [],
+      future: [],
+      selComps: [],
+      selWires: [],
+    });
+    sim.reset();
+  },
+
+  createCircuit: (name, doc) => {
+    const id = uid('cir');
+    const blank = doc ?? emptyDoc(name || `${tr(get().lang, 'doc.untitled')} ${get().circuitOrder.length + 1}`);
+    const circuits = normalizeProject({ ...get().circuits, [id]: cloneDoc(blank) });
+    set((s) => ({
+      circuits,
+      circuitOrder: [...s.circuitOrder, id],
+    }));
+    return id;
+  },
+
+  deleteCircuit: (id) => {
+    const s = get();
+    if (s.circuitOrder.length <= 1) {
+      s.toastMsg(tr(s.lang, 'circuit.lastOne'), 'warn');
+      return;
+    }
+    const referenced = Object.values(s.circuits).some((d) =>
+      d.comps.some((c) => c.kind === 'sub' && c.attrs.circuit === id),
+    );
+    if (referenced) {
+      s.toastMsg(tr(s.lang, 'circuit.referenced'), 'warn');
+      return;
+    }
+    const order = s.circuitOrder.filter((x) => x !== id);
+    const circuits = { ...s.circuits };
+    delete circuits[id];
+    const nextId = s.currentCircuit === id ? order[0] : s.currentCircuit;
+    const normalized = normalizeProject(circuits);
+    set({
+      doc: normalized[nextId],
+      circuits: normalized,
+      circuitOrder: order,
+      currentCircuit: nextId,
+      past: [],
+      future: [],
+      selComps: [],
+      selWires: [],
+    });
+    sim.reset();
+  },
+
+  addSubcircuit: (targetId, at, facing = 'east') => {
+    const s = get();
+    const target = s.circuits[targetId];
+    if (!target) return null;
+    const hasCycle = (id: string, seen: Set<string>): boolean => {
+      if (id === s.currentCircuit) return true;
+      if (seen.has(id)) return false;
+      seen.add(id);
+      const doc = s.circuits[id];
+      if (!doc) return false;
+      return doc.comps.some(
+        (c) => c.kind === 'sub' && !!c.attrs.circuit && hasCycle(c.attrs.circuit, seen),
+      );
+    };
+    if (hasCycle(targetId, new Set())) {
+      s.toastMsg(tr(s.lang, 'circuit.recursive'), 'warn');
+      return null;
+    }
+    const layout = computeSubLayout(target);
+    const comp = createComp('sub', at, facing, get().lang, {
+      circuit: targetId,
+      circuitName: target.name,
+      ...layout,
+    });
+    get().mutate((d) => {
+      d.comps.push(comp);
+    });
+    set({ selComps: [comp.id], selWires: [] });
+    return comp;
+  },
+
   setTool: (tool) =>
     set((s) => ({ tool, pendingKind: tool === 'select' ? s.pendingKind : null })),
   setPendingKind: (kind) => set({ pendingKind: kind, tool: 'select' }),
@@ -333,20 +585,27 @@ export const useEditor = create<EditorState>((set, get) => ({
   toggleRunning: () => set((s) => ({ running: !s.running })),
   setShowGrid: (showGrid) => set({ showGrid }),
   setCanvasTheme: (canvasTheme) => set({ canvasTheme }),
-  setLang: (lang) =>
-    set((s) => {
-      const oldDefault = tr(s.lang, 'doc.untitled');
-      const newDefault = tr(lang, 'doc.untitled');
-      return {
-        lang,
-        doc: s.doc.name === oldDefault ? { ...s.doc, name: newDefault } : s.doc,
-      };
-    }),
+  setLang: (lang) => {
+    const s = get();
+    const oldDefaultZh = tr('zh', 'doc.untitled');
+    const oldDefaultEn = tr('en', 'doc.untitled');
+    const newDefault = tr(lang, 'doc.untitled');
+    const docs: Record<string, Doc> = {};
+    for (const [id, doc] of Object.entries(s.circuits)) {
+      docs[id] = doc.name === oldDefaultZh || doc.name === oldDefaultEn ? { ...doc, name: newDefault } : doc;
+    }
+    const current = s.doc.name === oldDefaultZh || s.doc.name === oldDefaultEn;
+    docs[s.currentCircuit] = current ? { ...s.doc, name: newDefault } : s.doc;
+    const normalized = normalizeProject(docs);
+    set({ lang, doc: normalized[s.currentCircuit], circuits: normalized });
+  },
   setAppearance: (appearance) => set({ appearance }),
   setSidebar: (sidebar) => set({ sidebar }),
   setInspector: (inspector) => set({ inspector }),
   setPaletteOpen: (paletteOpen) => set({ paletteOpen }),
   setShortcutsOpen: (shortcutsOpen) => set({ shortcutsOpen }),
+  setTruthOpen: (truthOpen, focus = null) => set({ truthOpen, truthFocus: focus }),
+  setEquationOpen: (equationOpen) => set({ equationOpen }),
   setWelcomeClosed: (welcomeClosed) => {
     setWelcomeSeen(welcomeClosed);
     set({ welcomeClosed });
@@ -376,10 +635,21 @@ export const useEditor = create<EditorState>((set, get) => ({
       selWires: additive ? s.selWires : [],
     })),
 
-  selectWire: (wireId, additive = false) => {
+  selectWire: (wireId, additive = false, wholeNet = false) => {
     const { doc } = get();
     const idx = doc.wires.findIndex((w) => w.id === wireId);
     if (idx < 0) return;
+    if (!wholeNet) {
+      set((s) => ({
+        selWires: additive
+          ? s.selWires.includes(wireId)
+            ? s.selWires.filter((x) => x !== wireId)
+            : [...s.selWires, wireId]
+          : [wireId],
+        selComps: additive ? s.selComps : [],
+      }));
+      return;
+    }
     const nl = buildNetlist(doc);
     const net = nl.wireNet[idx];
     const ids = net === undefined ? [wireId] : nl.nets[net].wires.map((i) => doc.wires[i].id);
@@ -387,6 +657,10 @@ export const useEditor = create<EditorState>((set, get) => ({
       selWires: additive ? Array.from(new Set([...s.selWires, ...ids])) : Array.from(new Set(ids)),
       selComps: additive ? s.selComps : [],
     }));
+  },
+
+  selectWireNet: (wireId, additive = false) => {
+    get().selectWire(wireId, additive, true);
   },
 
   selectAll: () =>
@@ -405,6 +679,33 @@ export const useEditor = create<EditorState>((set, get) => ({
       d.wires = d.wires.filter((w) => !selWires.includes(w.id));
     });
     set({ selComps: [], selWires: [] });
+  },
+
+  splitWire: (wireId, at) => {
+    const { doc } = get();
+    const wire = doc.wires.find((w) => w.id === wireId);
+    if (!wire) return;
+    const onVertical = Math.abs(wire.a.x - wire.b.x) < 0.01;
+    const interior = onVertical
+      ? Math.abs(at.x - wire.a.x) < 5 &&
+        at.y > Math.min(wire.a.y, wire.b.y) + 2 &&
+        at.y < Math.max(wire.a.y, wire.b.y) - 2
+      : Math.abs(at.y - wire.a.y) < 5 &&
+        at.x > Math.min(wire.a.x, wire.b.x) + 2 &&
+        at.x < Math.max(wire.a.x, wire.b.x) - 2;
+    if (!interior) return;
+    const p = {
+      x: onVertical ? wire.a.x : Math.round(at.x),
+      y: onVertical ? Math.round(at.y) : wire.a.y,
+    };
+    get().mutate((d) => {
+      d.wires = d.wires.filter((w) => w.id !== wireId);
+      d.wires.push(
+        { id: uid('w'), a: { ...wire.a }, b: p },
+        { id: uid('w'), a: { ...p }, b: { ...wire.b } },
+      );
+    });
+    set({ selWires: [], selComps: [] });
   },
 
   duplicateSelection: () => {
@@ -458,8 +759,8 @@ export const useEditor = create<EditorState>((set, get) => ({
     );
   },
 
-  addComp: (kind, at, facing = 'east') => {
-    const comp = createComp(kind, at, facing, get().lang);
+  addComp: (kind, at, facing = 'east', attrs = {}) => {
+    const comp = createComp(kind, at, facing, get().lang, attrs);
     get().mutate((d) => {
       d.comps.push(comp);
     });
@@ -567,3 +868,32 @@ useEditor.subscribe((s, prev) => {
     }
   }
 });
+
+/** Build a project from imported named circuits (e.g. Logisim subcircuits). */
+export function projectFromNamedDocs(
+  named: Record<string, Doc>,
+  mainName?: string,
+): ProjectData {
+  const ids = new Map<string, string>();
+  for (const name of Object.keys(named)) ids.set(name, uid('cir'));
+  const circuits: Record<string, Doc> = {};
+  const order: string[] = [];
+  for (const [name, source] of Object.entries(named)) {
+    const id = ids.get(name)!;
+    const doc = cloneDoc(source);
+    for (const comp of doc.comps) {
+      if (comp.kind !== 'sub') continue;
+      const targetName = comp.attrs.circuit ?? '';
+      const targetId = ids.get(targetName);
+      if (targetId) {
+        comp.attrs.circuit = targetId;
+        comp.attrs.circuitName = named[targetName]?.name ?? targetName;
+      }
+    }
+    circuits[id] = doc;
+    order.push(id);
+  }
+  const normalized = normalizeProject(circuits);
+  const current = (mainName && ids.get(mainName)) || order[0];
+  return { current, circuits: normalized, order };
+}

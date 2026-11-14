@@ -1,9 +1,10 @@
 import { downloadText, exportCirc, importCirc, safeFilename } from './circ';
 import { itemCount, tr, type MessageKey } from '../i18n';
-import { useEditor } from './store';
+import { projectFromNamedDocs, useEditor, type ProjectData } from './store';
 import { sim } from '../model/sim';
 import { viewControls } from '../canvas/view';
 import type { Doc } from '../model/types';
+import { SPEC_BY_KIND } from '../model/specs';
 import type { Template } from './templates';
 
 function pickTextFile(accept: string, onText: (text: string, name: string) => void) {
@@ -38,30 +39,44 @@ function tx(lang: 'zh' | 'en', key: MessageKey, vars?: Record<string, string | n
   return tr(lang, key, vars);
 }
 
+function validProject(p: unknown): p is ProjectData {
+  const project = p as ProjectData | null;
+  return (
+    !!project &&
+    !!project.circuits &&
+    typeof project.circuits === 'object' &&
+    Array.isArray(project.order)
+  );
+}
+
 export function saveProject() {
-  const { doc, toastMsg, markSaved, lang } = useEditor.getState();
+  const st = useEditor.getState();
+  const project = st.snapshotProject();
   const payload = {
     app: 'logisim-studio',
-    version: 1,
+    version: 2,
     savedAt: new Date().toISOString(),
-    doc,
+    project,
+    doc: st.doc,
   };
-  downloadText(safeFilename(doc.name, '.json'), JSON.stringify(payload, null, 2), 'application/json');
-  markSaved();
-  toastMsg(tx(lang, 'file.saved'), 'success');
+  downloadText(safeFilename(st.doc.name, '.json'), JSON.stringify(payload, null, 2), 'application/json');
+  st.markSaved();
+  st.toastMsg(tx(st.lang, 'file.saved'), 'success');
 }
 
 export function openProject() {
   pickTextFile('.json,.circ,.xml', (text, name) => {
-    const { loadDoc, toastMsg, lang } = useEditor.getState();
+    const st = useEditor.getState();
+    const lang = st.lang;
     const trimmed = text.trim();
     try {
       if (trimmed.startsWith('<')) {
         const result = importCirc(trimmed, name.replace(/\.[^.]+$/, ''), lang);
-        loadDoc(result.doc, { welcomeClosed: true });
+        const project = projectFromNamedDocs(result.circuits, result.mainName);
+        st.loadProject(project);
         sim.reset();
-        const items = itemCount(lang, result.doc.comps.length, '个元件', 'component');
-        toastMsg(
+        const items = itemCount(lang, result.supported, '个元件', 'component');
+        st.toastMsg(
           result.warnings.length
             ? tx(lang, 'file.importedWarn', { items, warning: result.warnings[0] })
             : tx(lang, 'file.imported', { items }),
@@ -69,40 +84,54 @@ export function openProject() {
         );
         if (result.warnings.length) console.warn('[Logisim Studio] .circ import:', result.warnings);
       } else {
-        let parsed: { doc?: Doc } | Doc;
+        let parsed: { project?: unknown; doc?: Doc; circuits?: unknown; current?: string } | Doc;
         try {
           parsed = JSON.parse(trimmed);
         } catch {
           throw new Error(tx(lang, 'file.invalidProject'));
         }
-        const doc: Doc = (parsed as { doc?: Doc }).doc ?? (parsed as Doc);
-        if (!doc || !Array.isArray(doc.comps) || !Array.isArray(doc.wires)) {
-          throw new Error(tx(lang, 'file.invalidProject'));
+        const p = parsed as { project?: unknown; doc?: Doc; circuits?: unknown; current?: string };
+        if (p.project && validProject(p.project)) {
+          st.loadProject(p.project);
+        } else if (p.circuits && typeof p.circuits === 'object' && !Array.isArray(p.circuits)) {
+          const circuits = p.circuits as Record<string, Doc>;
+          const order = Object.keys(circuits);
+          const first = order[0];
+          if (!first) throw new Error(tx(lang, 'file.invalidProject'));
+          st.loadProject({ circuits, order, current: p.current && circuits[p.current] ? p.current : first });
+        } else {
+          const doc: Doc = (p as { doc?: Doc }).doc ?? (p as Doc);
+          if (!doc || !Array.isArray(doc.comps) || !Array.isArray(doc.wires)) {
+            throw new Error(tx(lang, 'file.invalidProject'));
+          }
+          st.loadDoc(doc, { welcomeClosed: true });
         }
-        loadDoc(doc, { welcomeClosed: true });
         sim.reset();
-        toastMsg(tx(lang, 'file.opened'), 'success');
+        st.toastMsg(tx(lang, 'file.opened'), 'success');
       }
       setTimeout(() => viewControls.fit(), 40);
     } catch (err) {
       console.error(err);
-      toastMsg(err instanceof Error && err.message ? err.message : tx(lang, 'file.openFailed'), 'error');
+      st.toastMsg(err instanceof Error && err.message ? err.message : tx(lang, 'file.openFailed'), 'error');
     }
   });
 }
 
 export function exportCircFile() {
-  const { doc, toastMsg, lang } = useEditor.getState();
-  const result = exportCirc(doc);
+  const st = useEditor.getState();
+  const result = exportCirc(st.doc, st.circuits, st.currentCircuit);
   setTimeout(() => {
-    downloadText(safeFilename(doc.name, '.circ'), result.xml, 'application/xml');
+    downloadText(safeFilename(st.doc.name, '.circ'), result.xml, 'application/xml');
     if (result.skipped.length) {
       const items = result.skipped
-        .map((k) => tx(lang, k === 'split' ? 'file.split' : 'file.merge'))
-        .join(lang === 'zh' ? '、' : ', ');
-      toastMsg(tx(lang, 'file.exportedWarn', { items }), 'warn');
+        .map((k) => {
+          const spec = SPEC_BY_KIND[k as keyof typeof SPEC_BY_KIND];
+          return st.lang === 'zh' ? spec?.name ?? k : spec?.nameEn ?? k;
+        })
+        .join(st.lang === 'zh' ? '、' : ', ');
+      st.toastMsg(tx(st.lang, 'file.exportedWarn', { items }), 'warn');
     } else {
-      toastMsg(tx(lang, 'file.exported'), 'success');
+      st.toastMsg(tx(st.lang, 'file.exported'), 'success');
     }
   }, 20);
 }
@@ -118,9 +147,22 @@ export function newCircuit() {
 export function loadTemplate(template: Template) {
   const st = useEditor.getState();
   const doc = template.make(st.lang);
-  const name = st.lang === 'zh' ? template.name : template.nameEn;
-  st.loadDoc(doc, { welcomeClosed: true });
+  const baseName = st.lang === 'zh' ? template.name : template.nameEn;
+  const hasProject =
+    Object.keys(st.circuits).length > 1 || st.doc.comps.length > 0 || st.doc.wires.length > 0;
+  if (hasProject) {
+    let name = baseName;
+    let n = 2;
+    const names = new Set(Object.values(st.circuits).map((d) => d.name));
+    while (names.has(name)) name = `${baseName} ${n++}`;
+    doc.name = name;
+    const id = st.createCircuit(name, doc);
+    st.switchCircuit(id);
+    st.toastMsg(tr(st.lang, 'file.templateLoaded', { name }), 'success');
+  } else {
+    st.loadDoc(doc, { welcomeClosed: true });
+    st.toastMsg(tr(st.lang, 'file.templateLoaded', { name: baseName }), 'success');
+  }
   sim.reset();
   setTimeout(() => viewControls.fit(), 30);
-  st.toastMsg(tr(st.lang, 'file.templateLoaded', { name }), 'success');
 }
