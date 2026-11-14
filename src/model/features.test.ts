@@ -6,6 +6,7 @@ import { portsOf } from './geometry';
 import type { ComponentInstance, Doc, Point } from './types';
 import { buildTruthTable } from '../analysis/truthTable';
 import { synthesizeEquations } from '../analysis/equations';
+import { buildNetlist } from './netlist';
 
 const channels = new WeakMap<Doc, number>();
 function wire(doc: Doc, a: Point, b: Point) {
@@ -316,5 +317,23 @@ describe('analysis tools', () => {
       [1, 0],
       [0, 1],
     ]);
+  });
+
+  it('lays out synthesized circuits compactly without shorting nets', () => {
+    const result = synthesizeEquations('Y = A & B\nCout = (A & B) | (Cin & (A ^ B))');
+    const xs = result.doc.comps.map((c) => c.at.x);
+    const width = Math.max(...xs) - Math.min(...xs);
+    // Three gate columns plus the pins: much tighter than the old 170px pitch.
+    expect(width).toBeLessThan(520);
+
+    const comps = new Map(result.doc.comps.map((c) => [c.id, c]));
+    const nets = buildNetlist(result.doc).nets;
+    for (const net of nets) {
+      const drivers = net.ports.filter((p) => {
+        const comp = comps.get(p.compId)!;
+        return portsOf(comp).find((x) => x.name === p.port)?.dir === 'out';
+      });
+      expect(drivers.length).toBeLessThanOrEqual(1);
+    }
   });
 });
