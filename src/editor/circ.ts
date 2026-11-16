@@ -2,6 +2,7 @@ import type { CompKind, ComponentInstance, Doc, Facing, Point } from '../model/t
 import { createComp, uid } from '../model/specs';
 import { contentBounds, portsOf } from '../model/geometry';
 import { computeSubLayout } from '../model/hierarchy';
+import { effectiveBitEnd } from '../model/buses';
 import { emptyDoc } from '../model/types';
 import { itemCount, tr, type Lang } from '../i18n';
 
@@ -254,6 +255,21 @@ export function importCirc(
       } else if (name === 'Tunnel') {
         comp = createComp('tunnel', loc, facing);
         comp.attrs.label = label ?? 'net';
+      } else if (name === 'Splitter') {
+        comp = createComp('split', loc, facing);
+        comp.attrs.bits = Math.max(1, Math.min(32, num(attr(el, 'incoming'), 8)));
+        comp.attrs.fans = Math.max(2, Math.min(12, num(attr(el, 'fanout'), 2)));
+        comp.attrs.label = label ?? '';
+        const defaults = effectiveBitEnd(comp);
+        let hasCustom = false;
+        const mapping = defaults.map((fallback, bit) => {
+          const raw = attr(el, `bit${bit}`);
+          if (raw === null) return fallback;
+          hasCustom = true;
+          if (raw === 'none') return 0;
+          return Math.max(0, Math.min(comp!.attrs.fans ?? 2, num(raw, -1) + 1));
+        });
+        if (hasCustom) comp.attrs.bitEnd = mapping;
       } else if (name === 'Text') {
         comp = createComp('text', { x: loc.x, y: loc.y }, 'east');
         comp.attrs.text = attr(el, 'text') ?? '';
@@ -686,7 +702,15 @@ function compToXml(c: ComponentInstance, circuits: Record<string, Doc>): { xml: 
       if (c.kind !== 'not' && (c.attrs.size ?? 50) !== 50) attrs.push(['size', c.attrs.size ?? 50]);
       attrs.push(['facing', facingAttr], ['label', label]);
       break;
-    case 'split':
+    case 'split': {
+      name = 'Splitter';
+      lib = '0';
+      const mapping = effectiveBitEnd(c);
+      attrs.push(['facing', facingAttr], ['fanout', c.attrs.fans ?? 2], ['incoming', c.attrs.bits ?? 8]);
+      mapping.forEach((end, bit) => attrs.push([`bit${bit}`, end === 0 ? 'none' : String(end - 1)]));
+      attrs.push(['label', label]);
+      break;
+    }
     case 'merge':
       return null;
   }

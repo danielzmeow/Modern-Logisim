@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { laneBits, laneOffsets } from './buses';
+import { effectiveBitEnd, laneBits, laneOffsets } from './buses';
 import { Simulator } from './sim';
 import { createComp } from './specs';
 import { portsOf } from './geometry';
@@ -76,5 +76,45 @@ describe('bus lanes', () => {
     expect(sim.valueOfPort(split.id, 'f1').value).toBe(6);
     expect(sim.valueOfPort(split.id, 'f2').value).toBe(2);
     expect(sim.valueOfPort(out.id, 'in').value).toBe(0b10110101);
+  });
+});
+
+describe('arbitrary bit mapping', () => {
+  it('maps interleaved bus bits to channels', () => {
+    const split = createComp('split', { x: 0, y: 0 }, 'east', 'en', {
+      bits: 4,
+      fans: 2,
+      bitEnd: [1, 2, 1, 2],
+    });
+    expect(laneBits(split)).toEqual([2, 2]);
+    expect(effectiveBitEnd(split)).toEqual([1, 2, 1, 2]);
+  });
+
+  it('splits and merges interleaved bits without losing order', () => {
+    const doc: Doc = { version: 1, name: 'interleaved', comps: [], wires: [] };
+    const input = createComp('input', { x: 0, y: 0 }, 'east', 'en', { bits: 4 });
+    const split = createComp('split', { x: 120, y: 0 }, 'east', 'en', {
+      bits: 4,
+      fans: 2,
+      bitEnd: [1, 2, 1, 2],
+    });
+    const merge = createComp('merge', { x: 320, y: 0 }, 'east', 'en', {
+      bits: 4,
+      fans: 2,
+      bitEnd: [1, 2, 1, 2],
+    });
+    const out = createComp('output', { x: 460, y: 0 }, 'west', 'en', { bits: 4 });
+    doc.comps.push(input, split, merge, out);
+    wire(doc, port(input, 'out'), port(split, 'bus'));
+    for (let i = 0; i < 2; i++) wire(doc, port(split, `f${i}`), port(merge, `f${i}`));
+    wire(doc, port(merge, 'bus'), port(out, 'in'));
+
+    const sim = new Simulator();
+    sim.update(doc);
+    sim.setPinValue(input.id, 0b1010);
+    sim.frame(0, false);
+    expect(sim.valueOfPort(split.id, 'f0').value).toBe(0b00);
+    expect(sim.valueOfPort(split.id, 'f1').value).toBe(0b11);
+    expect(sim.valueOfPort(out.id, 'in').value).toBe(0b1010);
   });
 });

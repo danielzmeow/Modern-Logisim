@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useEditor } from '../editor/store';
 import type { ComponentInstance, Facing } from '../model/types';
 import { buildNetlist } from '../model/netlist';
-import { customLaneBits, laneBits } from '../model/buses';
+import { customLaneBits, effectiveBitEnd, hasCustomBitEnd, laneBits } from '../model/buses';
 import { sim } from '../model/sim';
 import { viewControls } from '../canvas/view';
 import { CompIcon } from './icons';
@@ -265,7 +265,7 @@ function LaneBitsField({ comp }: { comp: ComponentInstance }) {
   const lanes = laneBits(comp);
   const summary = lanes.join('+');
   const [text, setText] = useState(() => summary);
-  useEffect(() => setText(summary), [comp.id, bits, fans, summary, comp.attrs.fanBits]);
+  useEffect(() => setText(summary), [comp.id, bits, fans, summary, comp.attrs.fanBits, comp.attrs.bitEnd]);
 
   const commit = () => {
     const values = text
@@ -273,7 +273,7 @@ function LaneBitsField({ comp }: { comp: ComponentInstance }) {
       .filter(Boolean)
       .map((part) => Number(part));
     if (!values.length) {
-      update(comp.id, { fanBits: undefined }, `fanBits:${comp.id}`);
+      update(comp.id, { fanBits: undefined, bitEnd: undefined }, `fanBits:${comp.id}`);
       setText(summary);
       return;
     }
@@ -286,7 +286,7 @@ function LaneBitsField({ comp }: { comp: ComponentInstance }) {
       setText(summary);
       return;
     }
-    update(comp.id, { fanBits: values }, `fanBits:${comp.id}`);
+    update(comp.id, { fanBits: values, bitEnd: undefined }, `fanBits:${comp.id}`);
   };
 
   return (
@@ -309,7 +309,61 @@ function LaneBitsField({ comp }: { comp: ComponentInstance }) {
       />
       <div className="mt-1 font-mono text-[10.5px] text-[var(--text-faint)]">
         {summary} = {bits} {t('inspector.bit')}
-        {customLaneBits(comp) ? ` · ${t('inspector.customLanes')}` : ''}
+        {customLaneBits(comp) || hasCustomBitEnd(comp) ? ` · ${t('inspector.customLanes')}` : ''}
+      </div>
+    </div>
+  );
+}
+
+function BitEndField({ comp }: { comp: ComponentInstance }) {
+  const { t } = useT();
+  const update = useEditor((s) => s.updateComp);
+  const bits = Math.max(1, Math.min(32, comp.attrs.bits ?? 8));
+  const fans = Math.max(2, Math.min(12, comp.attrs.fans ?? 2));
+  const current = effectiveBitEnd(comp).join(',');
+  const [text, setText] = useState(() => current);
+  useEffect(() => setText(current), [comp.id, bits, fans, current]);
+
+  const commit = () => {
+    const values = text
+      .split(/[\s,]+/)
+      .filter(Boolean)
+      .map((part) => Number(part));
+    if (!values.length) {
+      update(comp.id, { bitEnd: undefined }, `bitEnd:${comp.id}`);
+      setText(current);
+      return;
+    }
+    if (
+      values.length !== bits ||
+      values.some((n) => !Number.isInteger(n) || n < 0 || n > fans)
+    ) {
+      useEditor.getState().toastMsg(t('inspector.invalidBitEnd'), 'warn');
+      setText(current);
+      return;
+    }
+    update(comp.id, { bitEnd: values, fanBits: undefined }, `bitEnd:${comp.id}`);
+  };
+
+  return (
+    <div>
+      <input
+        className="field mono"
+        value={text}
+        spellCheck={false}
+        aria-label={t('inspector.bitMapping')}
+        onChange={(e) => setText(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') commit();
+          if (e.key === 'Escape') {
+            setText(current);
+            (e.target as HTMLInputElement).blur();
+          }
+        }}
+      />
+      <div className="mt-1 text-[10.5px] leading-[1.45] text-[var(--text-faint)]">
+        {t('inspector.bitMappingHint')}
       </div>
     </div>
   );
@@ -834,7 +888,7 @@ function CompEditor({ comp }: { comp: ComponentInstance }) {
       {isBus && (
         <Section title={t('inspector.bus')}>
           <Row label={t('inspector.busWidth')}>
-            <Num value={bits} min={1} max={32} suffix={t('inspector.bit')} onChange={(n) => update(comp.id, { bits: n, fanBits: undefined })} />
+            <Num value={bits} min={1} max={32} suffix={t('inspector.bit')} onChange={(n) => update(comp.id, { bits: n, fanBits: undefined, bitEnd: undefined })} />
           </Row>
           <Row label={t('inspector.fanout')}>
             <Num
@@ -842,11 +896,14 @@ function CompEditor({ comp }: { comp: ComponentInstance }) {
               min={2}
               max={12}
               suffix={lang === 'zh' ? '路' : ''}
-              onChange={(n) => update(comp.id, { fans: n, fanBits: undefined })}
+              onChange={(n) => update(comp.id, { fans: n, fanBits: undefined, bitEnd: undefined })}
             />
           </Row>
           <Row label={t('inspector.laneBits')}>
             <LaneBitsField comp={comp} />
+          </Row>
+          <Row label={t('inspector.bitMapping')}>
+            <BitEndField comp={comp} />
           </Row>
           <div className="mt-1.5 text-[11px] leading-[1.45] text-[var(--text-faint)]">
             {t('inspector.laneBitsHint')}

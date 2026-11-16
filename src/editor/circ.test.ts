@@ -33,10 +33,27 @@ describe('.circ export', () => {
     expect(xml).toContain('name="Shift Register"');
   });
 
-  it('reports skipped split/merge instead of silently dropping them', () => {
-    const doc = docWith('split', 'merge');
+  it('reports skipped merge instead of silently dropping it', () => {
+    const doc = docWith('merge');
     const { skipped } = exportCirc(doc);
-    expect(new Set(skipped)).toEqual(new Set(['split', 'merge']));
+    expect(skipped).toEqual(['merge']);
+  });
+
+  it('exports a Splitter with its per-bit mapping', () => {
+    const split = createComp('split', { x: 100, y: 100 }, 'east', 'en', {
+      bits: 4,
+      fans: 2,
+      bitEnd: [1, 2, 1, 2],
+    });
+    const doc: Doc = { version: 1, name: 'Splitter', comps: [split], wires: [] };
+    const { xml, skipped } = exportCirc(doc);
+    expect(skipped).toEqual([]);
+    expect(xml).toContain('name="Splitter"');
+    expect(xml).toContain('<a name="fanout" val="2"/>');
+    expect(xml).toContain('<a name="bit0" val="0"/>');
+    expect(xml).toContain('<a name="bit1" val="1"/>');
+    expect(xml).toContain('<a name="bit2" val="0"/>');
+    expect(xml).toContain('<a name="bit3" val="1"/>');
   });
 
   it('round-trips a Logisim ROM contents image', () => {

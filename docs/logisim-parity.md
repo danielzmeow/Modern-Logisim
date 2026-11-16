@@ -31,7 +31,7 @@
 ### 2.2 连线与基础
 
 - 已实现：输入/输出 Pin、Probe、Tunnel、Clock、Constant、Power、Ground、Pull Resistor、Bit Extender、总线分线/合线。
-- 部分：分线/合线支持非均匀通道位宽（如 8 → 3+3+2），但尚未实现任意 bit 重排和 `.circ` Splitter 映射。
+- 部分：分线器支持非均匀通道位宽和任意逐位映射（含 `.circ` Splitter 分线方向的导入/导出）；合线器导出仍会跳过。
 - 未实现：Logisim 风格的导线颜色属性、探针组合显示。
 
 ### 2.3 数据选择
@@ -101,7 +101,7 @@
 | 项目 JSON 保存/打开 | 已实现 | 包含全部电路、子电路、RAM/ROM 内容 |
 | `.circ` 导入 | 已实现 | 多电路、子电路、Pin/Probe/常见门/触发器/寄存器/计数器/复用器/算术/七段数码管等 |
 | `.circ` 导出 | 已实现 | 多电路与子电路；统一平移至正坐标 |
-| Splitter 导入/导出 | 未实现 | 自定义分线/合线仍会在导出时跳过 |
+| Splitter 导入/导出 | 部分 | 分线方向支持 `fanout`、`incoming`、`bit0..bitN` 任意映射；合线器导出跳过 |
 | RAM/ROM 内容导出 | 部分 | ROM 按 Logisim `addr/data` 写入 `.circ`；RAM 运行时内容只保存在项目 JSON 快照中 |
 | TTL / SoC / 特殊元件 | 未实现 | 导入时跳过并提示 |
 | 打印 / 导出图片 | 未实现 | |

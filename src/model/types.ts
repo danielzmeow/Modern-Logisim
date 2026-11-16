@@ -98,6 +98,8 @@ export interface CompAttrs {
   reset?: boolean;
   /** Split/merge channel widths; omitted means divide evenly. */
   fanBits?: number[];
+  /** Per-bus-bit channel mapping (1-based, 0 means unconnected). */
+  bitEnd?: number[];
   /** Shifter direction. */
   shift?: 'left' | 'right' | 'arithmetic';
   /** Counter direction. */

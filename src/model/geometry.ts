@@ -573,7 +573,7 @@ export function geom(comp: ComponentInstance): Geom {
       ports.push({ name: 'bus', local: { x: -w / 2, y: 0 }, dir: 'in', bits, label: `${bits}` });
       for (let i = 0; i < fans; i++) {
         const y = -((fans - 1) / 2) * 10 + i * 10;
-        ports.push({ name: `f${i}`, local: { x: w / 2, y }, dir: 'out', bits: lanes[i] ?? 1 });
+        ports.push({ name: `f${i}`, local: { x: w / 2, y }, dir: 'out', bits: Math.max(1, lanes[i] ?? 1) });
       }
       return { x: -w / 2, y: -h / 2, w, h, ports };
     }
@@ -585,7 +585,7 @@ export function geom(comp: ComponentInstance): Geom {
       const lanes = laneBits(comp);
       for (let i = 0; i < fans; i++) {
         const y = -((fans - 1) / 2) * 10 + i * 10;
-        ports.push({ name: `f${i}`, local: { x: -w / 2, y }, dir: 'in', bits: lanes[i] ?? 1 });
+        ports.push({ name: `f${i}`, local: { x: -w / 2, y }, dir: 'in', bits: Math.max(1, lanes[i] ?? 1) });
       }
       ports.push({ name: 'bus', local: { x: w / 2, y: 0 }, dir: 'out', bits, label: `${bits}` });
       return { x: -w / 2, y: -h / 2, w, h, ports };

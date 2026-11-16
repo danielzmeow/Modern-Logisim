@@ -1,7 +1,7 @@
 import type { ComponentInstance, Doc, SimWireState } from './types';
 import { buildNetlist, type Netlist } from './netlist';
 import { flattenCircuit } from './hierarchy';
-import { laneOffsets } from './buses';
+import { effectiveBitEnd, laneBits } from './buses';
 
 const MASK_CACHE: Record<number, number> = {};
 export function maskFor(bits: number): number {
@@ -444,11 +444,18 @@ function evalComponent(
         break;
       }
       const bus = read('bus');
-      const lanes = laneOffsets(comp);
-      for (let i = 0; i < fans; i++) {
-        const lane = lanes[i] ?? { bits: 1, offset: i };
-        drive(`f${i}`, (bus >>> lane.offset) & maskFor(lane.bits));
+      const ends = effectiveBitEnd(comp);
+      const widths = laneBits(comp);
+      const values = new Array<number>(fans).fill(0);
+      const positions = new Array<number>(fans).fill(0);
+      for (let bit = 0; bit < ends.length; bit++) {
+        const lane = ends[bit];
+        if (!lane) continue;
+        const index = lane - 1;
+        const position = positions[index]++;
+        values[index] |= ((bus >>> bit) & 1) << position;
       }
+      for (let i = 0; i < fans; i++) drive(`f${i}`, values[i] & maskFor(widths[i]));
       break;
     }
     case 'merge': {
@@ -457,12 +464,17 @@ function evalComponent(
         drive('bus', 0, { error: true });
         break;
       }
-      const lanes = laneOffsets(comp);
+      const ends = effectiveBitEnd(comp);
+      const widths = laneBits(comp);
+      const values = Array.from({ length: fans }, (_, i) => read(`f${i}`) & maskFor(widths[i]));
+      const positions = new Array<number>(fans).fill(0);
       let bus = 0;
-      for (let i = 0; i < fans; i++) {
-        const lane = lanes[i] ?? { bits: 1, offset: i };
-        const v = read(`f${i}`) & maskFor(lane.bits);
-        bus = (bus | (v << lane.offset)) >>> 0;
+      for (let bit = 0; bit < ends.length; bit++) {
+        const lane = ends[bit];
+        if (!lane) continue;
+        const index = lane - 1;
+        const value = (values[index] >>> positions[index]++) & 1;
+        bus = (bus | (value << bit)) >>> 0;
       }
       drive('bus', bus & maskFor(bits));
       break;

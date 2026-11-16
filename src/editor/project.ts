@@ -104,6 +104,11 @@ function cleanAttrs(kind: ComponentInstance['kind'], value: unknown): CompAttrs 
       ? src.fanBits.slice(0, 12).map((n) => int(n, 1, 1, 32))
       : undefined;
   }
+  if ('bitEnd' in src) {
+    attrs.bitEnd = Array.isArray(src.bitEnd)
+      ? src.bitEnd.slice(0, 32).map((n) => int(n, 0, 0, 12))
+      : undefined;
+  }
   if ('size' in src) {
     const n = int(src.size, 50, 30, 70);
     attrs.size = n === 30 || n === 50 || n === 70 ? n : 50;
