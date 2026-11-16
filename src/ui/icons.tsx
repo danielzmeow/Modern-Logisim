@@ -146,6 +146,10 @@ export function CompIcon({ kind, size = 24 }: { kind: CompKind; size?: number })
         </svg>
       );
     case 'dff':
+    case 'tff':
+    case 'jkff':
+    case 'sr':
+    case 'shift':
       return (
         <svg {...common}>
           <rect x="5" y="4.5" width="12" height="15" rx="2" />
@@ -278,6 +282,9 @@ export function CompIcon({ kind, size = 24 }: { kind: CompKind; size?: number })
     case 'adder':
     case 'subtractor':
     case 'multiplier':
+    case 'divider':
+    case 'negator':
+    case 'bitAdder':
     case 'comparator':
     case 'shifter':
       return (

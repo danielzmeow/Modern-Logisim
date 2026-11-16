@@ -2,6 +2,7 @@ import type { ComponentInstance, Doc, Point, CanvasTheme, Facing } from '../mode
 import { isGate, KIND_NAMES, KIND_NAMES_EN, pointKey } from '../model/types';
 import type { Lang } from '../i18n';
 import { geom, rotatedBounds, portsOf, estimateTextWidth, type Hit, type Bounds } from '../model/geometry';
+import { laneSummary } from '../model/buses';
 import { maskFor, type Simulator } from '../model/sim';
 import { PALETTES, LED_COLORS, UI_FONT, MONO_FONT, type Palette } from './theme';
 
@@ -491,6 +492,39 @@ function drawComponentInner(
       }
       break;
     }
+    case 'tff': {
+      chipBody(ctx, g, pal);
+      const q = ghost ? 0 : sim.valueOfPort(comp.id, 'q').value;
+      chipText(ctx, comp, -38, -10, 'T', pal.muted, 8, 'left');
+      chipText(ctx, comp, -38, 8, 'TFF', pal.faint, 6, 'left');
+      chipText(ctx, comp, -6, -8, formatValue(q, 1), q ? pal.wireHigh : pal.muted, 8, 'right');
+      break;
+    }
+    case 'jkff': {
+      chipBody(ctx, g, pal);
+      const q = ghost ? 0 : sim.valueOfPort(comp.id, 'q').value;
+      chipText(ctx, comp, -40, -10, 'J', pal.muted, 8, 'left');
+      chipText(ctx, comp, -40, 10, 'K', pal.muted, 8, 'left');
+      chipText(ctx, comp, -6, -12, formatValue(q, 1), q ? pal.wireHigh : pal.muted, 8, 'right');
+      break;
+    }
+    case 'sr': {
+      chipBody(ctx, g, pal);
+      const q = ghost ? 0 : sim.valueOfPort(comp.id, 'q').value;
+      chipText(ctx, comp, -40, -8, 'S', pal.muted, 8, 'left');
+      chipText(ctx, comp, -40, 12, 'R', pal.muted, 8, 'left');
+      chipText(ctx, comp, -6, -8, formatValue(q, 1), q ? pal.wireHigh : pal.muted, 8, 'right');
+      break;
+    }
+    case 'shift': {
+      chipBody(ctx, g, pal);
+      const q = ghost ? { value: 0 } : sim.valueOfPort(comp.id, 'q');
+      chipText(ctx, comp, -40, -14, 'SHIFT', pal.faint, 7, 'left');
+      chipText(ctx, comp, -6, 0, formatValue(q.value, comp.attrs.bits ?? 8), q.value ? pal.wireHigh : pal.muted, 7, 'right');
+      if (comp.attrs.enable !== false) chipText(ctx, comp, -15, 25, 'EN', pal.faint, 5.5, 'center');
+      if (comp.attrs.reset !== false) chipText(ctx, comp, 5, 25, 'R', pal.faint, 5.5, 'center');
+      break;
+    }
     case 'mux': {
       const selBits = Math.max(1, Math.min(4, comp.attrs.fans ?? 1));
       const n = 1 << selBits;
@@ -680,6 +714,40 @@ function drawComponentInner(
         chipText(ctx, comp, -20, 10, `S${comp.attrs.fans ?? 2}`, pal.faint, 6);
       }
       if (comp.kind === 'decoder' && comp.attrs.enable) chipText(ctx, comp, -20, -24, 'EN', pal.faint, 6);
+      break;
+    }
+    case 'negator': {
+      chipBody(ctx, g, pal);
+      const sv = ghost ? { value: 0 } : sim.valueOfPort(comp.id, 'out');
+      chipText(ctx, comp, -22, -3, 'NEG', pal.faint, 7, 'center');
+      chipText(
+        ctx,
+        comp,
+        -8,
+        5,
+        formatValue(sv.value, comp.attrs.bits ?? 8),
+        sv.value ? pal.wireHigh : pal.muted,
+        7,
+        'right',
+      );
+      break;
+    }
+    case 'divider': {
+      chipBody(ctx, g, pal);
+      const q = ghost ? { value: 0 } : sim.valueOfPort(comp.id, 'out');
+      const r = ghost ? { value: 0 } : sim.valueOfPort(comp.id, 'rem');
+      chipText(ctx, comp, -40, -20, '÷', pal.faint, 11, 'left');
+      chipText(ctx, comp, -40, -8, 'A/B', pal.faint, 6, 'left');
+      chipText(ctx, comp, -6, -10, formatValue(q.value, comp.attrs.bits ?? 8), q.value ? pal.wireHigh : pal.muted, 7, 'right');
+      chipText(ctx, comp, -6, 10, formatValue(r.value, comp.attrs.bits ?? 8), r.value ? pal.wireHigh : pal.muted, 7, 'right');
+      break;
+    }
+    case 'bitAdder': {
+      chipBody(ctx, g, pal);
+      const sv = ghost ? { value: 0 } : sim.valueOfPort(comp.id, 'out');
+      const outBits = Math.max(1, Math.ceil(Math.log2((comp.attrs.bits ?? 8) + 1)));
+      chipText(ctx, comp, -40, -12, 'Σ1s', pal.faint, 8, 'left');
+      chipText(ctx, comp, -6, 10, formatValue(sv.value, outBits), sv.value ? pal.wireHigh : pal.muted, 7, 'right');
       break;
     }
     case 'adder':
@@ -895,6 +963,8 @@ export function drawScene(opts: SceneOptions) {
     };
     return { w, i, b, visible: inView(b) };
   });
+  const netlist = sim.netlistOrNull();
+  const issueNets = new Set(netlist?.issues.map((issue) => issue.net) ?? []);
 
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
@@ -942,16 +1012,19 @@ export function drawScene(opts: SceneOptions) {
     if (!visible) continue;
     const sv = sim.valueOfWire(i);
     const bus = sv.width > 1;
+    const widthIssue = netlist ? issueNets.has(netlist.wireNet[i] ?? -1) : false;
     const color =
       sv.state === 'e'
         ? pal2.wireError
         : sv.state === 'z'
           ? pal2.wireZ
-          : bus
-            ? pal2.wireBus
-            : sv.value !== 0
-              ? pal2.wireHigh
-              : pal2.wireLow;
+          : widthIssue
+            ? pal2.wireWarn
+            : bus
+              ? pal2.wireBus
+              : sv.value !== 0
+                ? pal2.wireHigh
+                : pal2.wireLow;
     ctx.strokeStyle = color;
     ctx.lineWidth = bus ? 2.9 : 2.1;
     if (sv.state !== 'known') ctx.setLineDash(sv.state === 'z' ? [4, 4] : [2, 3]);
@@ -970,6 +1043,16 @@ export function drawScene(opts: SceneOptions) {
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       ctx.fillText(sv.state === 'e' ? 'E' : 'Z', mx, my);
+      ctx.restore();
+    } else if (widthIssue && zoom >= 0.65) {
+      const mx = (w.a.x + w.b.x) / 2;
+      const my = (w.a.y + w.b.y) / 2;
+      ctx.save();
+      ctx.font = `700 8px ${MONO}`;
+      ctx.fillStyle = color;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('!', mx, my);
       ctx.restore();
     }
 
@@ -1056,9 +1139,8 @@ export function drawScene(opts: SceneOptions) {
     }
 
     if (comp.kind === 'split' || comp.kind === 'merge') {
-      const fans = Math.max(2, Math.min(12, comp.attrs.fans ?? 2));
-      const fanBits = Math.max(1, Math.floor((comp.attrs.bits ?? 8) / fans));
-      drawLabelAbove(ctx, comp, comp.attrs.label || `${comp.attrs.bits ?? 8} → ${fans}×${fanBits}`, pal2, zoom);
+      const bits = comp.attrs.bits ?? 8;
+      drawLabelAbove(ctx, comp, comp.attrs.label || `${bits} → ${laneSummary(comp)}`, pal2, zoom);
     } else if (comp.kind === 'mux') {
       const n = 1 << Math.max(1, Math.min(4, comp.attrs.fans ?? 1));
       drawLabelAbove(ctx, comp, comp.attrs.label || `${n}:1 MUX`, pal2, zoom);
@@ -1095,8 +1177,9 @@ export function drawScene(opts: SceneOptions) {
     if (zoom >= 0.55) {
       const alwaysPins = [
         'sub', 'ram', 'rom', 'decoder', 'demux', 'priority', 'bitSelect',
-        'register', 'counter', 'adder', 'subtractor', 'multiplier', 'comparator',
-        'shifter', 'sevenseg', 'ctrlBuffer', 'ctrlInverter',
+        'register', 'counter', 'adder', 'subtractor', 'multiplier', 'divider', 'negator',
+        'bitAdder', 'comparator', 'shifter', 'sevenseg', 'ctrlBuffer', 'ctrlInverter',
+        'tff', 'jkff', 'sr', 'shift',
       ].includes(comp.kind);
       const showPorts =
         isHover || isSel || alwaysPins || opts.selComps.length > 0 || opts.hover?.type === 'port' || zoom >= 1.35;

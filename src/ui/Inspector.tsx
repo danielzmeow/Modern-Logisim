@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useEditor } from '../editor/store';
 import type { ComponentInstance, Facing } from '../model/types';
 import { buildNetlist } from '../model/netlist';
+import { customLaneBits, laneBits } from '../model/buses';
 import { sim } from '../model/sim';
 import { viewControls } from '../canvas/view';
 import { CompIcon } from './icons';
@@ -251,6 +252,64 @@ function PinValueField({ comp }: { comp: ComponentInstance }) {
       />
       <div className="mt-1 font-mono text-[12px] text-[var(--text-faint)]">
         = {sim.pinValue(comp.id)} · {t('inspector.runtimeValueHint')}
+      </div>
+    </div>
+  );
+}
+
+function LaneBitsField({ comp }: { comp: ComponentInstance }) {
+  const { t } = useT();
+  const update = useEditor((s) => s.updateComp);
+  const bits = Math.max(1, Math.min(32, comp.attrs.bits ?? 8));
+  const fans = Math.max(2, Math.min(12, comp.attrs.fans ?? 2));
+  const lanes = laneBits(comp);
+  const summary = lanes.join('+');
+  const [text, setText] = useState(() => summary);
+  useEffect(() => setText(summary), [comp.id, bits, fans, summary, comp.attrs.fanBits]);
+
+  const commit = () => {
+    const values = text
+      .split(/[\s,+x×]+/)
+      .filter(Boolean)
+      .map((part) => Number(part));
+    if (!values.length) {
+      update(comp.id, { fanBits: undefined }, `fanBits:${comp.id}`);
+      setText(summary);
+      return;
+    }
+    if (
+      values.length !== fans ||
+      values.some((n) => !Number.isInteger(n) || n < 1 || n > 32) ||
+      values.reduce((sum, n) => sum + n, 0) !== bits
+    ) {
+      useEditor.getState().toastMsg(t('inspector.invalidLaneBits'), 'warn');
+      setText(summary);
+      return;
+    }
+    update(comp.id, { fanBits: values }, `fanBits:${comp.id}`);
+  };
+
+  return (
+    <div>
+      <input
+        className="field mono"
+        value={text}
+        spellCheck={false}
+        placeholder={Array.from({ length: fans }, () => Math.max(1, Math.floor(bits / fans))).join(',')}
+        aria-label={t('inspector.laneBits')}
+        onChange={(e) => setText(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') commit();
+          if (e.key === 'Escape') {
+            setText(summary);
+            (e.target as HTMLInputElement).blur();
+          }
+        }}
+      />
+      <div className="mt-1 font-mono text-[10.5px] text-[var(--text-faint)]">
+        {summary} = {bits} {t('inspector.bit')}
+        {customLaneBits(comp) ? ` · ${t('inspector.customLanes')}` : ''}
       </div>
     </div>
   );
@@ -511,7 +570,7 @@ function CompEditor({ comp }: { comp: ComponentInstance }) {
         </Section>
       )}
 
-      {comp.kind === 'dff' && (
+      {(comp.kind === 'dff' || comp.kind === 'tff' || comp.kind === 'jkff') && (
         <Section title={t('inspector.trigger')}>
           <Row label={t('inspector.triggerEdge')}>
             <Segmented
@@ -525,7 +584,17 @@ function CompEditor({ comp }: { comp: ComponentInstance }) {
             />
           </Row>
           <div className="mt-1.5 font-mono text-[12px] text-[var(--text-faint)]">
-            {t('inspector.qReadout', { q: sim.valueOfPort(comp.id, 'q').value ? '1' : '0' })}
+            {comp.kind === 'dff'
+              ? t('inspector.qReadout', { q: sim.valueOfPort(comp.id, 'q').value ? '1' : '0' })
+              : t('inspector.stateReadout', { q: sim.valueOfPort(comp.id, 'q').value ? '1' : '0' })}
+          </div>
+        </Section>
+      )}
+
+      {comp.kind === 'sr' && (
+        <Section title={t('inspector.trigger')}>
+          <div className="font-mono text-[12px] text-[var(--text-faint)]">
+            {t('inspector.stateReadout', { q: sim.valueOfPort(comp.id, 'q').value ? '1' : '0' })}
           </div>
         </Section>
       )}
@@ -610,8 +679,8 @@ function CompEditor({ comp }: { comp: ComponentInstance }) {
         </Section>
       )}
 
-      {(comp.kind === 'register' || comp.kind === 'counter') && (
-        <Section title={comp.kind === 'register' ? t('inspector.trigger') : t('inspector.count')}>
+      {(comp.kind === 'register' || comp.kind === 'counter' || comp.kind === 'shift') && (
+        <Section title={comp.kind === 'counter' ? t('inspector.count') : t('inspector.trigger')}>
           <Row label={t('inspector.width')}>
             <Num value={bits} min={1} max={32} suffix={t('inspector.bit')} onChange={(n) => update(comp.id, { bits: n })} />
           </Row>
@@ -671,7 +740,7 @@ function CompEditor({ comp }: { comp: ComponentInstance }) {
         </Section>
       )}
 
-      {(comp.kind === 'adder' || comp.kind === 'subtractor' || comp.kind === 'multiplier' || comp.kind === 'comparator') && (
+      {(comp.kind === 'adder' || comp.kind === 'subtractor' || comp.kind === 'multiplier' || comp.kind === 'divider' || comp.kind === 'negator' || comp.kind === 'bitAdder' || comp.kind === 'comparator') && (
         <Section title={t('inspector.signal')}>
           <Row label={t('inspector.dataWidth')}>
             <Num value={bits} min={1} max={32} suffix={t('inspector.bit')} onChange={(n) => update(comp.id, { bits: n })} />
@@ -765,7 +834,7 @@ function CompEditor({ comp }: { comp: ComponentInstance }) {
       {isBus && (
         <Section title={t('inspector.bus')}>
           <Row label={t('inspector.busWidth')}>
-            <Num value={bits} min={1} max={32} suffix={t('inspector.bit')} onChange={(n) => update(comp.id, { bits: n })} />
+            <Num value={bits} min={1} max={32} suffix={t('inspector.bit')} onChange={(n) => update(comp.id, { bits: n, fanBits: undefined })} />
           </Row>
           <Row label={t('inspector.fanout')}>
             <Num
@@ -773,18 +842,14 @@ function CompEditor({ comp }: { comp: ComponentInstance }) {
               min={2}
               max={12}
               suffix={lang === 'zh' ? '路' : ''}
-              onChange={(n) => update(comp.id, { fans: n })}
+              onChange={(n) => update(comp.id, { fans: n, fanBits: undefined })}
             />
           </Row>
-          <div className="mt-1.5 flex items-center justify-between gap-2 text-[12px]">
-            <span className="text-[var(--text-faint)]">
-              {lang === 'zh'
-                ? t('inspector.perFan', { n: Math.max(1, Math.floor(bits / fans)) })
-                : `${Math.max(1, Math.floor(bits / fans))} ${Math.max(1, Math.floor(bits / fans)) === 1 ? 'bit' : 'bits'} per channel`}
-            </span>
-            {bits % fans !== 0 && (
-              <span className="text-right text-[var(--warning-text)]">{t('inspector.notDivisible')}</span>
-            )}
+          <Row label={t('inspector.laneBits')}>
+            <LaneBitsField comp={comp} />
+          </Row>
+          <div className="mt-1.5 text-[11px] leading-[1.45] text-[var(--text-faint)]">
+            {t('inspector.laneBitsHint')}
           </div>
         </Section>
       )}
@@ -890,7 +955,8 @@ function WireEditor({ count }: { count: number }) {
     if (first < 0) return null;
     const net = nl.wireNet[first];
     const sv = sim.valueOfNet(net);
-    return { width: sv.width, value: sv.value, net };
+    const issue = nl.issues.find((entry) => entry.net === net);
+    return { width: sv.width, value: sv.value, net, issue: !!issue };
   }, [doc, selWires, simTick]);
   return (
     <>
@@ -923,6 +989,11 @@ function WireEditor({ count }: { count: number }) {
             <span>{t('inspector.net')}</span>
             <b>#{info.net}</b>
           </div>
+          {info.issue && (
+            <div className="mt-1 rounded-md border border-[var(--warning-text)] bg-[var(--warning-soft)] px-2 py-1.5 text-[11px] leading-[1.45] text-[var(--warning-text)]">
+              {t('inspector.widthIssueHint')}
+            </div>
+          )}
         </Section>
       )}
       <Section title={t('inspector.actions')}>
@@ -984,6 +1055,7 @@ export function Inspector() {
       nets: nl.nets.length,
       buses: nl.nets.filter((n) => n.width > 1).length,
       high,
+      issues: nl.issues.length,
     };
   }, [doc, comps.length, selectedWires.length, simTick]);
 
@@ -1038,6 +1110,12 @@ export function Inspector() {
                     <span>{t('inspector.highNets')}</span>
                     <b className={stats?.high ? '!text-[var(--success-text)]' : ''}>{stats?.high ?? 0}</b>
                   </div>
+                  {!!stats?.issues && (
+                    <div className="stat-row">
+                      <span>{t('inspector.widthIssues')}</span>
+                      <b className="!text-[var(--warning-text)]">{stats.issues}</b>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>

@@ -3,7 +3,8 @@ import { useEditor } from '../editor/store';
 import { useT } from './useT';
 import { useFocusTrap } from './useFocusTrap';
 import { buildTruthTable, formatCell, truthTableCsv } from '../analysis/truthTable';
-import { ClipboardCopy, Hash, X } from 'lucide-react';
+import { minimizeTruthTable } from '../analysis/minimize';
+import { ClipboardCopy, FunctionSquare, Hash, X } from 'lucide-react';
 
 export function TruthTable() {
   const open = useEditor((s) => s.truthOpen);
@@ -14,6 +15,7 @@ export function TruthTable() {
   const { t, lang } = useT();
   const panelRef = useRef<HTMLDivElement>(null);
   const [copied, setCopied] = useState(false);
+  const [showExpressions, setShowExpressions] = useState(false);
   useFocusTrap(panelRef, open);
 
   const table = useMemo(() => {
@@ -35,6 +37,20 @@ export function TruthTable() {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [open, setOpen]);
+
+  useEffect(() => {
+    if (!open) setShowExpressions(false);
+  }, [open]);
+
+  const minimized = useMemo(() => {
+    if (!open || !showExpressions || !table || table.sequential) return null;
+    try {
+      return minimizeTruthTable(table);
+    } catch (err) {
+      console.error(err);
+      return null;
+    }
+  }, [open, showExpressions, table]);
 
   if (!open) return null;
 
@@ -78,6 +94,14 @@ export function TruthTable() {
             </div>
           </div>
           <div className="flex items-center gap-1.5">
+            <button
+              className="btn btn-soft !h-7 !text-[11px]"
+              onClick={() => setShowExpressions((v) => !v)}
+              disabled={!table || table.sequential || !table.outputs.length}
+            >
+              <FunctionSquare size={12} />{' '}
+              {showExpressions ? t('analysis.hideExpressions') : t('analysis.simplify')}
+            </button>
             <button className="btn btn-soft !h-7 !text-[11px]" onClick={copy} disabled={!table || empty}>
               <ClipboardCopy size={12} /> {copied ? '✓' : t('analysis.copyCsv')}
             </button>
@@ -182,6 +206,50 @@ export function TruthTable() {
             </table>
           )}
         </div>
+
+        {showExpressions && (
+          <div className="scroll-thin max-h-[30vh] shrink-0 overflow-auto border-t border-[var(--line)] bg-[var(--surface-raised)] px-4 py-3">
+            <div className="mb-1.5 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.1em] text-[var(--text-muted)]">
+              <FunctionSquare size={12} />
+              {t('analysis.expressions')}
+            </div>
+            {table?.sequential ? (
+              <div className="text-[11.5px] text-[var(--warning-text)]">
+                {t('analysis.sequentialNoMinimize')}
+              </div>
+            ) : minimized?.tooManyVariables ? (
+              <div className="text-[11.5px] text-[var(--warning-text)]">
+                {t('analysis.tooManyVariables', { n: 10 })}
+              </div>
+            ) : minimized && minimized.expressions.length ? (
+              <div className="grid gap-1.5">
+                {minimized.expressions.map((entry) => (
+                  <div
+                    key={entry.label}
+                    className="flex items-start gap-2 rounded-md border border-[var(--line)] bg-[var(--card)] px-2 py-1.5"
+                  >
+                    <span className="shrink-0 font-mono text-[11.5px] font-semibold text-[var(--text-strong)]">
+                      {entry.label} =
+                    </span>
+                    <code className="break-all font-mono text-[11.5px] leading-[1.5] text-[var(--accent-text)]">
+                      {entry.expression}
+                    </code>
+                  </div>
+                ))}
+                {!!minimized.skipped.length && (
+                  <div className="text-[11px] text-[var(--text-faint)]">
+                    {t('analysis.skippedExpressions', { names: minimized.skipped.join(', ') })}
+                  </div>
+                )}
+                <div className="text-[11px] leading-[1.45] text-[var(--text-faint)]">
+                  {t('analysis.expressionsHint')}
+                </div>
+              </div>
+            ) : (
+              <div className="text-[11.5px] text-[var(--text-muted)]">{t('analysis.noExpressions')}</div>
+            )}
+          </div>
+        )}
 
         <div className="flex shrink-0 flex-wrap items-center gap-x-4 gap-y-1 border-t border-[var(--line)] px-4 py-2 text-[11px] text-[var(--text-faint)]">
           <span>
