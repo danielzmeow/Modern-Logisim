@@ -358,6 +358,12 @@ export function importCirc(
         comp = createComp(kind, loc, facing);
         comp.attrs.bits = Math.max(1, Math.min(32, num(attr(el, 'width'), 8)));
         comp.attrs.label = label ?? '';
+      } else if (name === 'Bit Finder') {
+        comp = createComp('bitFinder', loc, facing);
+        comp.attrs.bits = Math.max(1, Math.min(32, num(attr(el, 'width'), 8)));
+        const mode = attr(el, 'type') ?? 'low1';
+        comp.attrs.find = mode === 'high1' || mode === 'low0' || mode === 'high0' ? mode : 'low1';
+        comp.attrs.label = label ?? '';
       } else if (name === 'Shifter') {
         comp = createComp('shifter', loc, facing);
         comp.attrs.bits = Math.max(1, Math.min(32, num(attr(el, 'width'), 8)));
@@ -499,7 +505,7 @@ const LIB: Record<CompKind, string> = {
   not: '1', and: '1', or: '1', nand: '1', nor: '1', xor: '1', xnor: '1', buffer: '1', odd: '1', even: '1',
   ctrlBuffer: '1', ctrlInverter: '1',
   mux: '2', decoder: '2', demux: '2', priority: '2', bitSelect: '2',
-  adder: '3', subtractor: '3', multiplier: '3', divider: '3', negator: '3', bitAdder: '3', comparator: '3', shifter: '3',
+  adder: '3', subtractor: '3', multiplier: '3', divider: '3', negator: '3', bitAdder: '3', bitFinder: '3', comparator: '3', shifter: '3',
   dff: '4', tff: '4', jkff: '4', sr: '4', shift: '4', register: '4', counter: '4', ram: '4', rom: '4',
   led: '5', button: '5', sevenseg: '5',
   text: '6', sub: '-',
@@ -664,6 +670,15 @@ function compToXml(c: ComponentInstance, circuits: Record<string, Doc>): { xml: 
     case 'comparator':
       name = c.kind === 'adder' ? 'Adder' : c.kind === 'subtractor' ? 'Subtractor' : c.kind === 'multiplier' ? 'Multiplier' : c.kind === 'divider' ? 'Divider' : c.kind === 'negator' ? 'Negator' : c.kind === 'bitAdder' ? 'Bit Adder' : 'Comparator';
       attrs.push(['facing', facingAttr], ['width', c.attrs.bits ?? 8], ['label', label]);
+      break;
+    case 'bitFinder':
+      name = 'Bit Finder';
+      attrs.push(
+        ['facing', facingAttr],
+        ['width', c.attrs.bits ?? 8],
+        ['type', c.attrs.find ?? 'low1'],
+        ['label', label],
+      );
       break;
     case 'shifter':
       name = 'Shifter';

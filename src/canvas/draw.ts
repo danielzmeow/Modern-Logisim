@@ -750,6 +750,16 @@ function drawComponentInner(
       chipText(ctx, comp, -6, 10, formatValue(sv.value, outBits), sv.value ? pal.wireHigh : pal.muted, 7, 'right');
       break;
     }
+    case 'bitFinder': {
+      chipBody(ctx, g, pal);
+      const index = ghost ? { value: 0 } : sim.valueOfPort(comp.id, 'index');
+      const mode = comp.attrs.find ?? 'low1';
+      const label = mode === 'low1' ? 'L1' : mode === 'high1' ? 'H1' : mode === 'low0' ? 'L0' : 'H0';
+      chipText(ctx, comp, -34, -8, 'FIND', pal.faint, 7, 'left');
+      chipText(ctx, comp, -34, 6, label, pal.muted, 8, 'left');
+      chipText(ctx, comp, -6, -8, formatValue(index.value, Math.max(1, Math.ceil(Math.log2(comp.attrs.bits ?? 8)))), index.value ? pal.wireHigh : pal.muted, 7, 'right');
+      break;
+    }
     case 'adder':
     case 'subtractor':
     case 'multiplier':
@@ -1178,7 +1188,7 @@ export function drawScene(opts: SceneOptions) {
       const alwaysPins = [
         'sub', 'ram', 'rom', 'decoder', 'demux', 'priority', 'bitSelect',
         'register', 'counter', 'adder', 'subtractor', 'multiplier', 'divider', 'negator',
-        'bitAdder', 'comparator', 'shifter', 'sevenseg', 'ctrlBuffer', 'ctrlInverter',
+        'bitAdder', 'bitFinder', 'comparator', 'shifter', 'sevenseg', 'ctrlBuffer', 'ctrlInverter',
         'tff', 'jkff', 'sr', 'shift',
       ].includes(comp.kind);
       const showPorts =

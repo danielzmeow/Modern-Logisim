@@ -285,6 +285,7 @@ export function CompIcon({ kind, size = 24 }: { kind: CompKind; size?: number })
     case 'divider':
     case 'negator':
     case 'bitAdder':
+    case 'bitFinder':
     case 'comparator':
     case 'shifter':
       return (

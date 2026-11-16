@@ -130,6 +130,12 @@ function cleanAttrs(kind: ComponentInstance['kind'], value: unknown): CompAttrs 
   if ('shift' in src) {
     attrs.shift = src.shift === 'right' || src.shift === 'arithmetic' ? src.shift : 'left';
   }
+  if ('find' in src) {
+    attrs.find =
+      src.find === 'high1' || src.find === 'low0' || src.find === 'high0' || src.find === 'low1'
+        ? src.find
+        : 'low1';
+  }
   if ('count' in src) attrs.count = src.count === 'down' ? 'down' : 'up';
   if ('addrBits' in src) attrs.addrBits = int(src.addrBits, 4, 1, 20);
   if ('dataBits' in src) attrs.dataBits = int(src.dataBits, 8, 1, 32);

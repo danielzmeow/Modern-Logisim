@@ -84,3 +84,16 @@ describe('.circ export', () => {
     expect(xml.match(/<a name="contents">/g)).toHaveLength(1);
   });
 });
+
+describe('.circ arithmetic components', () => {
+  it('writes Bit Finder with its mode', () => {
+    const finder = createComp('bitFinder', { x: 100, y: 100 }, 'east', 'en', {
+      bits: 8,
+      find: 'high0',
+    });
+    const doc: Doc = { version: 1, name: 'Finder', comps: [finder], wires: [] };
+    const xml = exportCirc(doc).xml;
+    expect(xml).toContain('name="Bit Finder"');
+    expect(xml).toContain('<a name="type" val="high0"/>');
+  });
+});

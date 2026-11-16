@@ -47,6 +47,7 @@ export type CompKind =
   | 'divider'
   | 'negator'
   | 'bitAdder'
+  | 'bitFinder'
   | 'comparator'
   | 'shifter'
   | 'sevenseg'
@@ -102,6 +103,8 @@ export interface CompAttrs {
   bitEnd?: number[];
   /** Shifter direction. */
   shift?: 'left' | 'right' | 'arithmetic';
+  /** Bit finder mode. */
+  find?: 'low1' | 'high1' | 'low0' | 'high0';
   /** Counter direction. */
   count?: 'up' | 'down';
   /** RAM / ROM geometry. */
@@ -298,6 +301,7 @@ export const KIND_NAMES: Record<CompKind, string> = {
   divider: '除法器',
   negator: '取反器',
   bitAdder: '位加法器',
+  bitFinder: '位查找器',
   comparator: '比较器',
   shifter: '移位器',
   sevenseg: '七段数码管',
@@ -352,6 +356,7 @@ export const KIND_NAMES_EN: Record<CompKind, string> = {
   divider: 'Divider',
   negator: 'Negator',
   bitAdder: 'Bit Adder',
+  bitFinder: 'Bit Finder',
   comparator: 'Comparator',
   shifter: 'Shifter',
   sevenseg: 'Seven-Segment Display',

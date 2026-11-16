@@ -794,10 +794,28 @@ function CompEditor({ comp }: { comp: ComponentInstance }) {
         </Section>
       )}
 
-      {(comp.kind === 'adder' || comp.kind === 'subtractor' || comp.kind === 'multiplier' || comp.kind === 'divider' || comp.kind === 'negator' || comp.kind === 'bitAdder' || comp.kind === 'comparator') && (
+      {(comp.kind === 'adder' || comp.kind === 'subtractor' || comp.kind === 'multiplier' || comp.kind === 'divider' || comp.kind === 'negator' || comp.kind === 'bitAdder' || comp.kind === 'bitFinder' || comp.kind === 'comparator') && (
         <Section title={t('inspector.signal')}>
           <Row label={t('inspector.dataWidth')}>
             <Num value={bits} min={1} max={32} suffix={t('inspector.bit')} onChange={(n) => update(comp.id, { bits: n })} />
+          </Row>
+        </Section>
+      )}
+
+      {comp.kind === 'bitFinder' && (
+        <Section title={t('inspector.findMode')}>
+          <Row label={t('inspector.findMode')}>
+            <Segmented
+              accent
+              value={comp.attrs.find ?? 'low1'}
+              options={[
+                { value: 'low1' as const, label: t('inspector.findLowOne') },
+                { value: 'high1' as const, label: t('inspector.findHighOne') },
+                { value: 'low0' as const, label: t('inspector.findLowZero') },
+                { value: 'high0' as const, label: t('inspector.findHighZero') },
+              ]}
+              onChange={(v) => update(comp.id, { find: v })}
+            />
           </Row>
         </Section>
       )}

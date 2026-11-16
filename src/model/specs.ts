@@ -314,6 +314,15 @@ export const SPECS: Spec[] = [
     keywords: ['bit adder', 'popcount', 'ones', '位加法', '计数', '置位'],
   },
   {
+    kind: 'bitFinder',
+    name: '位查找器',
+    nameEn: 'Bit Finder',
+    category: 'arithmetic',
+    desc: '查找最低/最高位为 0 或 1 的位置',
+    descEn: 'Finds the lowest or highest 0/1 bit',
+    keywords: ['bit finder', 'find', 'index', '位查找', '最低位', '最高位'],
+  },
+  {
     kind: 'comparator',
     name: '比较器',
     nameEn: 'Comparator',
@@ -559,6 +568,8 @@ export function defaultAttrs(kind: CompKind, lang: Lang = 'en'): CompAttrs {
       return { label: '', bits: 8 };
     case 'bitAdder':
       return { label: '', bits: 8 };
+    case 'bitFinder':
+      return { label: '', bits: 8, find: 'low1' };
     case 'shifter':
       return { label: '', bits: 8, shift: 'left' };
     case 'split':

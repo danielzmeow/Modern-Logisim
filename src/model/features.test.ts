@@ -626,3 +626,51 @@ describe('width diagnostics', () => {
     expect(buildNetlist(doc).issues).toHaveLength(0);
   });
 });
+
+describe('bit finder', () => {
+  const build = (find: 'low1' | 'high1' | 'low0' | 'high0') => {
+    const doc: Doc = { version: 1, name: 'find', comps: [], wires: [] };
+    const input = createComp('input', { x: 0, y: 0 }, 'east', 'en', { bits: 8 });
+    const finder = createComp('bitFinder', { x: 160, y: 0 }, 'east', 'en', { bits: 8, find });
+    const present = createComp('output', { x: 300, y: -10 }, 'west');
+    const index = createComp('output', { x: 300, y: 20 }, 'west', 'en', { bits: 3 });
+    doc.comps.push(input, finder, present, index);
+    wire(doc, port(input, 'out'), port(finder, 'in'));
+    wire(doc, port(finder, 'present'), port(present, 'in'));
+    wire(doc, port(finder, 'index'), port(index, 'in'));
+    const sim = new Simulator();
+    sim.update(doc);
+    return { sim, input, present, index };
+  };
+
+  it('finds the lowest and highest one', () => {
+    const low = build('low1');
+    low.sim.setPinValue(low.input.id, 0b00101000);
+    low.sim.frame(0, false);
+    expect(low.sim.valueOfPort(low.present.id, 'in').value).toBe(1);
+    expect(low.sim.valueOfPort(low.index.id, 'in').value).toBe(3);
+
+    const high = build('high1');
+    high.sim.setPinValue(high.input.id, 0b00101000);
+    high.sim.frame(0, false);
+    expect(high.sim.valueOfPort(high.index.id, 'in').value).toBe(5);
+  });
+
+  it('finds the lowest and highest zero and reports no match', () => {
+    const low = build('low0');
+    low.sim.setPinValue(low.input.id, 0b11111110);
+    low.sim.frame(0, false);
+    expect(low.sim.valueOfPort(low.index.id, 'in').value).toBe(0);
+
+    const high = build('high0');
+    high.sim.setPinValue(high.input.id, 0b01111111);
+    high.sim.frame(0, false);
+    expect(high.sim.valueOfPort(high.index.id, 'in').value).toBe(7);
+
+    const none = build('high1');
+    none.sim.setPinValue(none.input.id, 0);
+    none.sim.frame(0, false);
+    expect(none.sim.valueOfPort(none.present.id, 'in').value).toBe(0);
+    expect(none.sim.valueOfPort(none.index.id, 'in').value).toBe(0);
+  });
+});

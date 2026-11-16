@@ -555,6 +555,20 @@ export function geom(comp: ComponentInstance): Geom {
         ],
       };
     }
+    case 'bitFinder': {
+      const outBits = Math.max(1, Math.ceil(Math.log2(bits)));
+      return {
+        x: -40,
+        y: -20,
+        w: 40,
+        h: 40,
+        ports: [
+          { name: 'in', local: { x: -40, y: 0 }, dir: 'in', bits, label: 'D' },
+          { name: 'present', local: { x: -20, y: 20 }, dir: 'out', bits: 1, label: 'P' },
+          { name: 'index', local: { x: 0, y: 0 }, dir: 'out', bits: outBits, label: 'I' },
+        ],
+      };
+    }
     case 'sevenseg': {
       return {
         x: 0,

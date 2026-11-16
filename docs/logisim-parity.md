@@ -42,8 +42,8 @@
 
 ### 2.4 算术运算
 
-- 已实现：Adder、Subtractor、Multiplier、Divider、Negator、Bit Adder、Comparator、Shifter（左移/逻辑右移/算术右移）。
-- 未实现：Bit Finder、Bit Counter 的高级模式、TTL 74xx 算术芯片等。
+- 已实现：Adder、Subtractor、Multiplier、Divider、Negator、Bit Adder、Bit Finder、Comparator、Shifter（左移/逻辑右移/算术右移）。
+- 未实现：Bit Counter 的高级模式、TTL 74xx 算术芯片等。
 - 部分：Divider 除零输出 `E`；乘法器输出为双倍位宽；尚未提供 Logisim Evolution 的额外算术选项。
 
 ### 2.5 存储

@@ -401,6 +401,28 @@ function evalComponent(
       drive('out', ones);
       break;
     }
+    case 'bitFinder': {
+      if (bad('in')) {
+        drive('present', 0, { error: true });
+        drive('index', 0, { error: true });
+        break;
+      }
+      const value = read('in') & maskFor(bits);
+      const mode = comp.attrs.find ?? 'low1';
+      const want = mode.endsWith('1') ? 1 : 0;
+      const lowFirst = mode.startsWith('low');
+      let found = -1;
+      for (let step = 0; step < bits; step++) {
+        const bit = lowFirst ? step : bits - 1 - step;
+        if (((value >>> bit) & 1) === want) {
+          found = bit;
+          break;
+        }
+      }
+      drive('present', found >= 0 ? 1 : 0);
+      drive('index', found >= 0 ? found : 0);
+      break;
+    }
     case 'comparator': {
       if (bad('a') || bad('b')) {
         drive('gt', 0, { error: true });
