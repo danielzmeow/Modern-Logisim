@@ -17,7 +17,28 @@ export interface TruthOutput {
 
 export interface TruthRow {
   inputs: number[];
-  outputs: { value: number; state: SimWireState }[];
+  outputs: { value: number; state: SimWireState; dontCare?: boolean }[];
+}
+
+export type TruthOverride = '0' | '1' | 'x';
+export type TruthOverrides = Record<string, TruthOverride>;
+
+/** Apply local 0/1/X edits to single-bit output cells without touching the circuit. */
+export function applyTruthOverrides(table: TruthTable, overrides: TruthOverrides): TruthTable {
+  if (!Object.keys(overrides).length) return table;
+  return {
+    ...table,
+    rows: table.rows.map((row, rowIndex) => ({
+      ...row,
+      outputs: row.outputs.map((cell, outputIndex) => {
+        if (table.outputs[outputIndex]?.bits !== 1) return cell;
+        const override = overrides[`${rowIndex}:${outputIndex}`];
+        if (!override) return cell;
+        if (override === 'x') return { value: 0, state: 'known' as const, dontCare: true };
+        return { value: override === '1' ? 1 : 0, state: 'known' as const };
+      }),
+    })),
+  };
 }
 
 export interface TruthTable {
@@ -136,7 +157,13 @@ export function truthTableCsv(table: TruthTable): string {
     const cells = [
       ...row.inputs.map((v, i) => formatCell(v, table.inputs[i].bits)),
       ...row.outputs.map((o, i) =>
-        o.state === 'e' ? 'E' : o.state === 'z' ? 'Z' : formatCell(o.value, table.outputs[i].bits),
+        o.dontCare
+          ? 'X'
+          : o.state === 'e'
+            ? 'E'
+            : o.state === 'z'
+              ? 'Z'
+              : formatCell(o.value, table.outputs[i].bits),
       ),
     ];
     lines.push(cells.join(','));
@@ -188,7 +215,13 @@ export function truthTablePla(table: TruthTable): string {
     table.outputs.forEach((output, outputIndex) => {
       const cell = row.outputs[outputIndex];
       for (let bit = output.bits - 1; bit >= 0; bit--) {
-        outputBits.push(cell?.state === 'known' ? String((cell.value >>> bit) & 1) : '-');
+        outputBits.push(
+          cell?.dontCare
+            ? '-'
+            : cell?.state === 'known'
+              ? String((cell.value >>> bit) & 1)
+              : '-',
+        );
       }
     });
     lines.push(`${inputBits.join('')} ${outputBits.join('')}`);

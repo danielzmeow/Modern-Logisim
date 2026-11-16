@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useEditor } from '../editor/store';
 import { useT } from './useT';
 import { useFocusTrap } from './useFocusTrap';
-import { buildTruthTable, formatCell, truthTableCsv, truthTablePla } from '../analysis/truthTable';
+import { buildTruthTable, applyTruthOverrides, formatCell, truthTableCsv, truthTablePla, type TruthOverride, type TruthOverrides } from '../analysis/truthTable';
 import { minimizeTruthTable } from '../analysis/minimize';
 import { synthesizeEquations } from '../analysis/equations';
 import { viewControls } from '../canvas/view';
@@ -19,9 +19,10 @@ export function TruthTable() {
   const [copied, setCopied] = useState(false);
   const [copiedPla, setCopiedPla] = useState(false);
   const [showExpressions, setShowExpressions] = useState(false);
+  const [overrides, setOverrides] = useState<TruthOverrides>({});
   useFocusTrap(panelRef, open);
 
-  const table = useMemo(() => {
+  const baseTable = useMemo(() => {
     if (!open) return null;
     try {
       return buildTruthTable(doc, circuits);
@@ -29,6 +30,15 @@ export function TruthTable() {
       console.error(err);
       return null;
     }
+  }, [open, doc, circuits]);
+
+  const table = useMemo(
+    () => (baseTable ? applyTruthOverrides(baseTable, overrides) : null),
+    [baseTable, overrides],
+  );
+
+  useEffect(() => {
+    setOverrides({});
   }, [open, doc, circuits]);
 
   useEffect(() => {
@@ -81,6 +91,25 @@ export function TruthTable() {
   };
 
   const empty = !table || !table.outputs.length || (!table.inputs.length && !table.outputs.length);
+  const editedCount = Object.keys(overrides).length;
+
+  const cycleCell = (rowIndex: number, outputIndex: number) => {
+    if (!table || table.sequential || table.outputs[outputIndex]?.bits !== 1) return;
+    const key = `${rowIndex}:${outputIndex}`;
+    const cell = table.rows[rowIndex]?.outputs[outputIndex];
+    setOverrides((prev) => {
+      const current = prev[key];
+      let next: TruthOverride | undefined;
+      if (!current) next = cell?.value ? '0' : '1';
+      else if (current === '0') next = '1';
+      else if (current === '1') next = 'x';
+      else next = undefined;
+      const copy = { ...prev };
+      if (next) copy[key] = next;
+      else delete copy[key];
+      return copy;
+    });
+  };
 
   const generateCircuit = () => {
     if (!minimized?.expressions.length) return;
@@ -138,6 +167,14 @@ export function TruthTable() {
             </div>
           </div>
           <div className="flex items-center gap-1.5">
+            {editedCount > 0 && (
+              <button
+                className="btn btn-soft !h-7 !text-[11px]"
+                onClick={() => setOverrides({})}
+              >
+                {t('analysis.resetEdits', { n: editedCount })}
+              </button>
+            )}
             <button
               className="btn btn-soft !h-7 !text-[11px]"
               onClick={() => setShowExpressions((v) => !v)}
@@ -222,8 +259,11 @@ export function TruthTable() {
                     ))}
                     {row.outputs.map((output, i) => {
                       const active = table!.outputs[i].comp.id === focus;
-                      const text =
-                        output.state === 'e'
+                      const editable = !table!.sequential && table!.outputs[i].bits === 1;
+                      const override = overrides[`${ri}:${i}`];
+                      const text = output.dontCare
+                        ? 'X'
+                        : output.state === 'e'
                           ? 'E'
                           : output.state === 'z'
                             ? 'Z'
@@ -231,16 +271,30 @@ export function TruthTable() {
                       return (
                         <td
                           key={`o-${ri}-${i}`}
+                          title={editable ? t('analysis.editCell') : undefined}
+                          tabIndex={editable ? 0 : undefined}
+                          onClick={() => cycleCell(ri, i)}
+                          onKeyDown={(e) => {
+                            if (!editable) return;
+                            if (e.key === 'Enter' || e.key === ' ') {
+                              e.preventDefault();
+                              cycleCell(ri, i);
+                            }
+                          }}
                           className={`border-l border-[var(--line)] px-2.5 py-1.5 font-mono tabular-nums ${
+                            editable ? 'cursor-pointer select-none hover:bg-[var(--hover)]' : ''
+                          } ${override ? 'ring-1 ring-inset ring-[var(--accent-line)]' : ''} ${
                             active
                               ? 'bg-[var(--accent-soft)] font-semibold text-[var(--accent-text)]'
-                              : output.state === 'e'
-                                ? 'text-[var(--danger-text)]'
-                                : output.state === 'z'
-                                  ? 'text-[var(--text-faint)]'
-                                  : output.value
-                                    ? 'text-[var(--success-text)]'
-                                    : 'text-[var(--text-muted)]'
+                              : output.dontCare
+                                ? 'text-[var(--warning-text)]'
+                                : output.state === 'e'
+                                  ? 'text-[var(--danger-text)]'
+                                  : output.state === 'z'
+                                    ? 'text-[var(--text-faint)]'
+                                    : output.value
+                                      ? 'text-[var(--success-text)]'
+                                      : 'text-[var(--text-muted)]'
                           }`}
                         >
                           {text}
@@ -319,7 +373,12 @@ export function TruthTable() {
               {t('analysis.tooMany', { n: table.maxRows })}
             </span>
           )}
-          <span className="ml-auto">{lang === 'zh' ? 'E = 冲突 / Z = 高阻' : 'E = conflict / Z = high-Z'}</span>
+          {table && !table.sequential && (
+            <span>{t('analysis.editHint')}</span>
+          )}
+          <span className="ml-auto">
+            {lang === 'zh' ? 'E = 冲突 / Z = 高阻 / X = 无关项' : 'E = conflict / Z = high-Z / X = don’t care'}
+          </span>
         </div>
       </div>
     </div>

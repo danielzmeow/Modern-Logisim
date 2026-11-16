@@ -60,6 +60,13 @@ describe('boolean minimization', () => {
     expect(result.skipped).toEqual(['Y']);
   });
 
+  it("uses don't-care cells to simplify further", () => {
+    const table = tableFor([0, 1, 0, 0]);
+    table.rows[3].outputs[0].dontCare = true;
+    const result = minimizeTruthTable(table);
+    expect(result.expressions[0].expression).toBe('B');
+  });
+
   it('refuses to expand more than the variable limit', () => {
     const result = minimizeTruthTable(tableFor([0], 11), 10);
     expect(result.tooManyVariables).toBe(true);
@@ -70,6 +77,16 @@ describe('boolean minimization', () => {
     const result = minimizeTruthTable(buildTruthTable(halfAdder()));
     expect(result.expressions.map((entry) => entry.label)).toEqual(['S', 'C']);
     expect(result.expressions.every((entry) => entry.expression !== '0')).toBe(true);
+  });
+
+  it('generates a circuit functionally equivalent to the truth table', () => {
+    const table = tableFor([0, 0, 1, 0]);
+    const result = minimizeTruthTable(table);
+    const source = result.expressions
+      .map((entry) => `${entry.name} = ${entry.expression}`)
+      .join('\n');
+    const generated = buildTruthTable(synthesizeEquations(source, 'en').doc);
+    expect(generated.rows.map((row) => row.outputs[0].value)).toEqual([0, 0, 1, 0]);
   });
 
   it('produces names that the equation parser can consume', () => {

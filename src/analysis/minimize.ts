@@ -146,9 +146,9 @@ function cover(minterms: number[], primes: Implicant[]): Implicant[] {
 export function minimizeTruthTable(table: TruthTable, maxVariables = 10): MinimizeResult {
   const names: string[] = [];
   const used = new Set<string>();
-  for (let inputIndex = table.inputs.length - 1; inputIndex >= 0; inputIndex--) {
+  for (let inputIndex = 0; inputIndex < table.inputs.length; inputIndex++) {
     const input = table.inputs[inputIndex];
-    for (let bit = 0; bit < input.bits; bit++) {
+    for (let bit = input.bits - 1; bit >= 0; bit--) {
       const base = input.bits === 1 ? input.label : `${input.label}${bit}`;
       names.push(safeIdentifier(base, `I${inputIndex}_${bit}`, used));
     }
@@ -164,9 +164,14 @@ export function minimizeTruthTable(table: TruthTable, maxVariables = 10): Minimi
     const output = table.outputs[outputIndex];
     for (let bit = 0; bit < output.bits; bit++) {
       const minterms: number[] = [];
+      const dontCares: number[] = [];
       let sawUnknown = false;
       for (let rowIndex = 0; rowIndex < table.rows.length; rowIndex++) {
         const cell = table.rows[rowIndex].outputs[outputIndex];
+        if (cell?.dontCare) {
+          dontCares.push(rowIndex);
+          continue;
+        }
         const value = cell?.value ?? 0;
         const state = cell?.state;
         if (state !== 'known') {
@@ -181,11 +186,11 @@ export function minimizeTruthTable(table: TruthTable, maxVariables = 10): Minimi
         skipped.push(label);
         continue;
       }
-      if (variables > 0 && minterms.length === 2 ** variables) {
+      if (variables > 0 && minterms.length + dontCares.length === 2 ** variables) {
         expressions.push({ name, label, variables: names, expression: '1' });
         continue;
       }
-      const primes = primeImplicants(minterms, variables);
+      const primes = primeImplicants([...minterms, ...dontCares], variables);
       const selected = cover(minterms, primes);
       const expression = selected.length
         ? selected.map((imp) => termText(imp, names)).join(' | ')
