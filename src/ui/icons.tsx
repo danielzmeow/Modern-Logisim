@@ -150,6 +150,7 @@ export function CompIcon({ kind, size = 24 }: { kind: CompKind; size?: number })
     case 'jkff':
     case 'sr':
     case 'shift':
+    case 'random':
       return (
         <svg {...common}>
           <rect x="5" y="4.5" width="12" height="15" rx="2" />

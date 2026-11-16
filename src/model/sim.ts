@@ -228,6 +228,10 @@ function evalComponent(
       drive('q', ctx.seqQ(comp.id) & maskFor(bits));
       break;
     }
+    case 'random': {
+      drive('q', ctx.seqQ(comp.id) & maskFor(bits));
+      break;
+    }
     case 'register': {
       drive('q', ctx.seqQ(comp.id) & maskFor(bits));
       break;
@@ -838,6 +842,40 @@ export class Simulator {
           (this.netValue(comp.id, 'enable') & 1) === 1;
         if (trigger && enabled && !reset && this.netKnown(comp.id, 'd')) {
           const next = ((st.q << 1) | (this.netValue(comp.id, 'd') & 1)) & maskFor(bits);
+          if (next !== st.q) {
+            st.q = next;
+            edgeChanged = true;
+          }
+        }
+        st.prevClk = clk;
+      } else if (comp.kind === 'random') {
+        const bits = bitsOf(comp, 8);
+        const st = this.seqComp(comp, bits);
+        const reset = comp.attrs.reset !== false && this.netKnown(comp.id, 'reset') && (this.netValue(comp.id, 'reset') & 1) === 1;
+        if (reset && st.q !== 0) {
+          st.q = 0;
+          edgeChanged = true;
+        }
+        if (!this.netKnown(comp.id, 'clk')) continue;
+        const clk = this.netValue(comp.id, 'clk') & 1;
+        if (!st.init) {
+          st.prevClk = clk;
+          st.init = true;
+          continue;
+        }
+        const rising = st.prevClk === 0 && clk === 1;
+        const falling = st.prevClk === 1 && clk === 0;
+        const trigger = comp.attrs.trigger === 'falling' ? falling : rising;
+        const enabled =
+          comp.attrs.enable === false ||
+          !this.netKnown(comp.id, 'enable') ||
+          (this.netValue(comp.id, 'enable') & 1) === 1;
+        if (trigger && enabled && !reset) {
+          let x = (st.q ^ ((comp.attrs.seed ?? 0) || 0x9e3779b9)) >>> 0;
+          x = (x ^ (x << 13)) >>> 0;
+          x = (x ^ (x >>> 17)) >>> 0;
+          x = (x ^ (x << 5)) >>> 0;
+          const next = x & maskFor(bits);
           if (next !== st.q) {
             st.q = next;
             edgeChanged = true;

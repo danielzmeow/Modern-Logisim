@@ -137,6 +137,7 @@ function cleanAttrs(kind: ComponentInstance['kind'], value: unknown): CompAttrs 
         : 'low1';
   }
   if ('count' in src) attrs.count = src.count === 'down' ? 'down' : 'up';
+  if ('seed' in src) attrs.seed = int(src.seed, 0, 0, 0xffffffff) >>> 0;
   if ('addrBits' in src) attrs.addrBits = int(src.addrBits, 4, 1, 20);
   if ('dataBits' in src) attrs.dataBits = int(src.dataBits, 8, 1, 32);
   if ('memory' in src) {

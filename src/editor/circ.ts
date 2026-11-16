@@ -286,6 +286,14 @@ export function importCirc(
       } else if (name === 'S-R Latch') {
         comp = createComp('sr', loc, facing);
         comp.attrs.label = label ?? '';
+      } else if (name === 'Random' || name === 'Random Generator') {
+        comp = createComp('random', loc, facing);
+        comp.attrs.bits = Math.max(1, Math.min(32, num(attr(el, 'width'), 8)));
+        comp.attrs.trigger = (attr(el, 'trigger') ?? 'rising') === 'falling' ? 'falling' : 'rising';
+        comp.attrs.seed = num(attr(el, 'seed'), 0);
+        comp.attrs.enable = attr(el, 'enable') !== 'false';
+        comp.attrs.reset = attr(el, 'reset') !== 'false';
+        comp.attrs.label = label ?? '';
       } else if (name === 'Shift Register') {
         comp = createComp('shift', loc, facing);
         comp.attrs.bits = Math.max(1, Math.min(32, num(attr(el, 'width'), 8)));
@@ -506,7 +514,7 @@ const LIB: Record<CompKind, string> = {
   ctrlBuffer: '1', ctrlInverter: '1',
   mux: '2', decoder: '2', demux: '2', priority: '2', bitSelect: '2',
   adder: '3', subtractor: '3', multiplier: '3', divider: '3', negator: '3', bitAdder: '3', bitFinder: '3', comparator: '3', shifter: '3',
-  dff: '4', tff: '4', jkff: '4', sr: '4', shift: '4', register: '4', counter: '4', ram: '4', rom: '4',
+  dff: '4', tff: '4', jkff: '4', sr: '4', shift: '4', random: '4', register: '4', counter: '4', ram: '4', rom: '4',
   led: '5', button: '5', sevenseg: '5',
   text: '6', sub: '-',
 };
@@ -607,6 +615,18 @@ function compToXml(c: ComponentInstance, circuits: Record<string, Doc>): { xml: 
     case 'sr':
       name = 'S-R Latch';
       attrs.push(['facing', facingAttr], ['label', label]);
+      break;
+    case 'random':
+      name = 'Random';
+      attrs.push(
+        ['facing', facingAttr],
+        ['width', c.attrs.bits ?? 8],
+        ['trigger', c.attrs.trigger ?? 'rising'],
+        ['seed', c.attrs.seed ?? 0],
+        ['enable', c.attrs.enable !== false ? 'true' : 'false'],
+        ['reset', c.attrs.reset !== false ? 'true' : 'false'],
+        ['label', label],
+      );
       break;
     case 'shift':
       name = 'Shift Register';

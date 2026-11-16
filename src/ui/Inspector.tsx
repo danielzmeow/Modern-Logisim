@@ -733,7 +733,7 @@ function CompEditor({ comp }: { comp: ComponentInstance }) {
         </Section>
       )}
 
-      {(comp.kind === 'register' || comp.kind === 'counter' || comp.kind === 'shift') && (
+      {(comp.kind === 'register' || comp.kind === 'counter' || comp.kind === 'shift' || comp.kind === 'random') && (
         <Section title={comp.kind === 'counter' ? t('inspector.count') : t('inspector.trigger')}>
           <Row label={t('inspector.width')}>
             <Num value={bits} min={1} max={32} suffix={t('inspector.bit')} onChange={(n) => update(comp.id, { bits: n })} />
@@ -749,6 +749,16 @@ function CompEditor({ comp }: { comp: ComponentInstance }) {
               onChange={(v) => update(comp.id, { trigger: v })}
             />
           </Row>
+          {comp.kind === 'random' && (
+            <Row label={t('inspector.seed')}>
+              <Num
+                value={comp.attrs.seed ?? 0}
+                min={0}
+                max={2147483647}
+                onChange={(n) => update(comp.id, { seed: n }, `seed:${comp.id}`)}
+              />
+            </Row>
+          )}
           {comp.kind === 'counter' && (
             <Row label={t('inspector.count')}>
               <Segmented

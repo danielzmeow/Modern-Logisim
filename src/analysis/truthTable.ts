@@ -58,6 +58,7 @@ const isSequential = (c: ComponentInstance) =>
   c.kind === 'jkff' ||
   c.kind === 'sr' ||
   c.kind === 'shift' ||
+  c.kind === 'random' ||
   c.kind === 'register' ||
   c.kind === 'counter' ||
   c.kind === 'ram';

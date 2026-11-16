@@ -97,3 +97,18 @@ describe('.circ arithmetic components', () => {
     expect(xml).toContain('<a name="type" val="high0"/>');
   });
 });
+
+describe('.circ memory components', () => {
+  it('writes Random with its seed and trigger', () => {
+    const rng = createComp('random', { x: 100, y: 100 }, 'east', 'en', {
+      bits: 8,
+      seed: 42,
+      trigger: 'falling',
+    });
+    const doc: Doc = { version: 1, name: 'Random', comps: [rng], wires: [] };
+    const xml = exportCirc(doc).xml;
+    expect(xml).toContain('name="Random"');
+    expect(xml).toContain('<a name="seed" val="42"/>');
+    expect(xml).toContain('<a name="trigger" val="falling"/>');
+  });
+});

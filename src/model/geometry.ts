@@ -307,6 +307,20 @@ export function geom(comp: ComponentInstance): Geom {
       }
       return { x: -50, y: -30, w: 50, h: 60, ports };
     }
+    case 'random': {
+      const bits = Math.max(1, Math.min(32, comp.attrs.bits ?? 8));
+      const ports: PortGeom[] = [
+        { name: 'q', local: { x: 0, y: 0 }, dir: 'out', bits, label: 'Q' },
+        { name: 'clk', local: { x: -40, y: 30 }, dir: 'in', bits: 1, label: '›' },
+      ];
+      if (comp.attrs.enable !== false) {
+        ports.push({ name: 'enable', local: { x: -15, y: 30 }, dir: 'in', bits: 1, label: 'EN' });
+      }
+      if (comp.attrs.reset !== false) {
+        ports.push({ name: 'reset', local: { x: 10, y: 30 }, dir: 'in', bits: 1, label: 'R' });
+      }
+      return { x: -50, y: -30, w: 50, h: 60, ports };
+    }
     case 'register': {
       const bits = Math.max(1, Math.min(32, comp.attrs.bits ?? 8));
       const ports: PortGeom[] = [

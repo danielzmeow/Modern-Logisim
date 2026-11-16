@@ -386,6 +386,15 @@ export const SPECS: Spec[] = [
     keywords: ['shift', 'register', 'serial', '移位', '寄存器', '串行'],
   },
   {
+    kind: 'random',
+    name: '随机数发生器',
+    nameEn: 'Random Generator',
+    category: 'memory',
+    desc: '在时钟沿生成新的伪随机数',
+    descEn: 'Produces a new pseudo-random value on a clock edge',
+    keywords: ['random', 'generator', 'seed', '随机', '随机数'],
+  },
+  {
     kind: 'register',
     name: '寄存器',
     nameEn: 'Register',
@@ -539,6 +548,8 @@ export function defaultAttrs(kind: CompKind, lang: Lang = 'en'): CompAttrs {
       return { label: '' };
     case 'shift':
       return { label: '', bits: 8, trigger: 'rising', enable: true, reset: true };
+    case 'random':
+      return { label: '', bits: 8, trigger: 'rising', enable: true, reset: true, seed: 0 };
     case 'register':
       return { label: '', bits: 8, trigger: 'rising', enable: true, reset: true };
     case 'counter':

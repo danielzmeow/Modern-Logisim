@@ -525,6 +525,15 @@ function drawComponentInner(
       if (comp.attrs.reset !== false) chipText(ctx, comp, 5, 25, 'R', pal.faint, 5.5, 'center');
       break;
     }
+    case 'random': {
+      chipBody(ctx, g, pal);
+      const q = ghost ? { value: 0 } : sim.valueOfPort(comp.id, 'q');
+      chipText(ctx, comp, -40, -14, 'RNG', pal.faint, 8, 'left');
+      chipText(ctx, comp, -6, 0, formatValue(q.value, comp.attrs.bits ?? 8), q.value ? pal.wireHigh : pal.muted, 7, 'right');
+      if (comp.attrs.enable !== false) chipText(ctx, comp, -15, 25, 'EN', pal.faint, 5.5, 'center');
+      if (comp.attrs.reset !== false) chipText(ctx, comp, 5, 25, 'R', pal.faint, 5.5, 'center');
+      break;
+    }
     case 'mux': {
       const selBits = Math.max(1, Math.min(4, comp.attrs.fans ?? 1));
       const n = 1 << selBits;
@@ -1189,7 +1198,7 @@ export function drawScene(opts: SceneOptions) {
         'sub', 'ram', 'rom', 'decoder', 'demux', 'priority', 'bitSelect',
         'register', 'counter', 'adder', 'subtractor', 'multiplier', 'divider', 'negator',
         'bitAdder', 'bitFinder', 'comparator', 'shifter', 'sevenseg', 'ctrlBuffer', 'ctrlInverter',
-        'tff', 'jkff', 'sr', 'shift',
+        'tff', 'jkff', 'sr', 'shift', 'random',
       ].includes(comp.kind);
       const showPorts =
         isHover || isSel || alwaysPins || opts.selComps.length > 0 || opts.hover?.type === 'port' || zoom >= 1.35;

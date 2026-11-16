@@ -32,7 +32,7 @@
   - 连线：Pin、Probe、Tunnel、Clock、Constant、Power、Ground、Pull Resistor、Bit Extender、分线/合线
   - 选择器：MUX、Decoder、Demux、Priority Encoder、Bit Selector
   - 算术：Adder、Subtractor、Multiplier、Divider、Negator、Bit Adder、Bit Finder、Comparator、Shifter
-  - 存储：DFF、T 触发器、JK 触发器、SR 锁存器、寄存器、移位寄存器、计数器、RAM、ROM
+  - 存储：DFF、T 触发器、JK 触发器、SR 锁存器、寄存器、移位寄存器、计数器、随机数发生器、RAM、ROM
   - I/O：Button、LED、七段数码管
 - **层级电路**：项目内可建多个电路，把任意电路拖成子电路；自动生成符号引脚，跨层级仿真
 - **分析工具**：枚举输入生成真值表（支持多位/时序电路，可复制 CSV/PLA）；点击输出位可编辑 0/1/X 无关项；对组合逻辑真值表做布尔化简并生成 SOP 表达式，可直接从化简结果生成新电路；从布尔方程自动生成门级电路
@@ -97,7 +97,7 @@ npm run typecheck
 
 导入导出是"实验性、够用"的程度，不是 100% 的 Logisim 实现：
 
-**可以导入**：多电路与子电路、输入/输出引脚、Probe、LED、Button、时钟、常量、Tunnel、电源/接地/上拉电阻、位扩展器、常见门、D/T/JK 触发器、SR 锁存器、寄存器、移位寄存器、计数器、RAM/ROM（参数与 ROM 内容）、多路选择器、译码器/解复用器/优先编码器/位选择器、加法/减法/乘法/除法/取反/位加法/位查找/比较/移位器、Splitter（按分线方向）、七段数码管、文字。
+**可以导入**：多电路与子电路、输入/输出引脚、Probe、LED、Button、时钟、常量、Tunnel、电源/接地/上拉电阻、位扩展器、常见门、D/T/JK 触发器、SR 锁存器、寄存器、移位寄存器、计数器、随机数发生器、RAM/ROM（参数与 ROM 内容）、多路选择器、译码器/解复用器/优先编码器/位选择器、加法/减法/乘法/除法/取反/位加法/位查找/比较/移位器、Splitter（按分线方向）、七段数码管、文字。
 
 **可以导出**：同上（导出成 Logisim 2.7.1 格式，包含全部电路与子电路），并会统一平移到正坐标。ROM 存储内容会按 Logisim 的 `addr/data` 格式写入 `.circ`；Splitter 会写入 `fanout`、`incoming` 和 `bit0..bitN` 逐位映射；RAM 运行时内容仍只保存在项目 JSON 中。合线器仍暂不写入 `.circ`。
 

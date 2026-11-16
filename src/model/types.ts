@@ -32,6 +32,7 @@ export type CompKind =
   | 'jkff'
   | 'sr'
   | 'shift'
+  | 'random'
   | 'register'
   | 'counter'
   | 'ram'
@@ -107,6 +108,8 @@ export interface CompAttrs {
   find?: 'low1' | 'high1' | 'low0' | 'high0';
   /** Counter direction. */
   count?: 'up' | 'down';
+  /** Random generator seed. */
+  seed?: number;
   /** RAM / ROM geometry. */
   addrBits?: number;
   dataBits?: number;
@@ -286,6 +289,7 @@ export const KIND_NAMES: Record<CompKind, string> = {
   jkff: 'JK 触发器',
   sr: 'SR 锁存器',
   shift: '移位寄存器',
+  random: '随机数发生器',
   register: '寄存器',
   counter: '计数器',
   ram: 'RAM',
@@ -341,6 +345,7 @@ export const KIND_NAMES_EN: Record<CompKind, string> = {
   jkff: 'JK Flip-Flop',
   sr: 'S-R Latch',
   shift: 'Shift Register',
+  random: 'Random Generator',
   register: 'Register',
   counter: 'Counter',
   ram: 'RAM',
