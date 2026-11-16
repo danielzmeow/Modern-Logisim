@@ -19,10 +19,26 @@ import { computeSubLayout, syncSubLayouts } from '../model/hierarchy';
 import { createComp, uid } from '../model/specs';
 import { followMovedWires } from '../model/editing';
 import { sim } from '../model/sim';
+import { extractSelection, pasteData, type ClipboardData } from './clipboard';
+import { sanitizeProject, type ProjectData } from './project';
+
+export type { ProjectData } from './project';
 
 const DOC_KEY = 'logisim-studio.doc.v1';
+const DOC_BACKUP_KEY = 'logisim-studio.doc.v1.backup';
 const PREFS_KEY = 'logisim-studio.prefs.v1';
 const WELCOME_KEY = 'logisim-studio.welcomeSeen.v1';
+type StorageLike = Pick<Storage, 'getItem' | 'setItem'>;
+let storageNotice: string | null = null;
+let storageLoadFailed = false;
+export function takeStorageNotice(): string | null {
+  const notice = storageNotice;
+  storageNotice = null;
+  return notice;
+}
+export function autosaveIsBlocked(): boolean {
+  return storageLoadFailed;
+}
 
 function welcomeSeen(): boolean {
   try {
@@ -80,51 +96,53 @@ function loadPrefs(): Prefs {
   };
 }
 
-export interface ProjectData {
-  current: string;
-  circuits: Record<string, Doc>;
-  order: string[];
-}
-
-function validDoc(d: unknown): d is Doc {
-  const doc = d as Doc | null;
-  return !!doc && Array.isArray(doc.comps) && Array.isArray(doc.wires);
-}
-
 function projectFromDoc(doc: Doc): ProjectData {
   const id = uid('cir');
   return { current: id, circuits: { [id]: doc }, order: [id] };
 }
 
-export function loadSavedProject(): ProjectData | null {
-  try {
-    const raw = localStorage.getItem(DOC_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as
-      | (Partial<ProjectData> & { circuits?: unknown })
-      | Doc
-      | { doc?: Doc };
-    if (validDoc(parsed)) return projectFromDoc(parsed);
-    if (parsed && validDoc((parsed as { doc?: Doc }).doc)) {
-      return projectFromDoc((parsed as { doc: Doc }).doc);
+export function loadSavedProject(
+  lang: Lang = detectLang(),
+  storage: StorageLike = localStorage,
+): ProjectData | null {
+  let mainInvalid = false;
+  const read = (key: string): ProjectData | null => {
+    try {
+      const raw = storage.getItem(key);
+      if (!raw) return null;
+      const result = sanitizeProject(JSON.parse(raw), lang);
+      if (!result) return null;
+      if (result.warnings.length) {
+        storageNotice = tr(lang, 'project.repaired', {
+          details: result.warnings.join(' · '),
+        });
+      }
+      return result.project;
+    } catch {
+      return null;
     }
-    const p = parsed as Partial<ProjectData>;
-    if (p && p.circuits && typeof p.circuits === 'object') {
-      const circuits: Record<string, Doc> = {};
-      const order: string[] = [];
-      for (const [id, doc] of Object.entries(p.circuits as Record<string, Doc>)) {
-        if (validDoc(doc)) {
-          circuits[id] = doc;
-          order.push(id);
-        }
-      }
-      if (order.length) {
-        const current = p.current && circuits[p.current] ? p.current : order[0];
-        return { current, circuits, order };
-      }
+  };
+  try {
+    const main = read(DOC_KEY);
+    if (main) {
+      storageLoadFailed = false;
+      return main;
+    }
+    mainInvalid = !!storage.getItem(DOC_KEY);
+    const backup = read(DOC_BACKUP_KEY);
+    if (backup) {
+      storageLoadFailed = false;
+      storageNotice = tr(lang, 'project.backupRestored');
+      return backup;
+    }
+    if (mainInvalid) {
+      // Do not let the first autosave overwrite a damaged payload: it may still
+      // be recoverable by hand, and there is no backup to replace it with.
+      storageLoadFailed = true;
+      storageNotice = tr(lang, 'project.invalidStored');
     }
   } catch {
-    /* ignore */
+    storageLoadFailed = true;
   }
   return null;
 }
@@ -136,18 +154,50 @@ export function loadSavedDoc(): Doc | null {
 
 export function hasSavedDoc(): boolean {
   try {
-    return !!localStorage.getItem(DOC_KEY);
+    return !!localStorage.getItem(DOC_KEY) || !!localStorage.getItem(DOC_BACKUP_KEY);
   } catch {
     return false;
   }
 }
+export interface SaveResult {
+  ok: boolean;
+  savedAt: number;
+  error?: string;
+}
 
-export function saveProjectToStorage(project: ProjectData) {
+/**
+ * Persist the project atomically enough to survive a failed write: the previous
+ * successful payload is kept as a backup before the main key is replaced.
+ */
+export function saveProjectToStorage(
+  project: ProjectData,
+  storage: StorageLike = localStorage,
+): SaveResult {
+  const savedAt = Date.now();
   try {
-    localStorage.setItem(DOC_KEY, JSON.stringify({ version: 2, ...project }));
-    localStorage.setItem(DOC_KEY + '.at', String(Date.now()));
-  } catch {
-    /* ignore */
+    const payload = JSON.stringify({ version: 2, ...project });
+    const previous = storage.getItem(DOC_KEY);
+    if (previous && previous !== payload) {
+      try {
+        storage.setItem(DOC_BACKUP_KEY, previous);
+      } catch {
+        // A full disk should not stop us from trying the main write; the main
+        // payload is the one that matters to the current session.
+      }
+    }
+    storage.setItem(DOC_KEY, payload);
+    try {
+      storage.setItem(DOC_KEY + '.at', String(savedAt));
+    } catch {
+      // The timestamp is diagnostic only; the project payload is what matters.
+    }
+    return { ok: true, savedAt };
+  } catch (err) {
+    return {
+      ok: false,
+      savedAt: 0,
+      error: err instanceof Error ? err.message : String(err),
+    };
   }
 }
 
@@ -186,6 +236,9 @@ interface EditorState {
   welcomeClosed: boolean;
   toast: Toast | null;
   lastSaved: number;
+  saveError: string | null;
+  savePending: boolean;
+  autosaveBlocked: boolean;
   cursorWorld: Point | null;
   simTick: number;
   menu: { x: number; y: number; target: 'comp' | 'wire' | 'canvas'; wireId?: string; world?: Point } | null;
@@ -195,7 +248,7 @@ interface EditorState {
 
   setName: (name: string) => void;
   loadDoc: (doc: Doc, opts?: { welcomeClosed?: boolean }) => void;
-  loadProject: (project: ProjectData) => void;
+  loadProject: (project: ProjectData) => boolean;
   newDoc: () => void;
   snapshotProject: () => ProjectData;
   mutate: (fn: (draft: Doc) => void, opts?: { history?: boolean; coalesce?: string }) => void;
@@ -232,7 +285,9 @@ interface EditorState {
   setMenu: (m: EditorState['menu']) => void;
   toastMsg: (text: string, tone?: ToastTone) => void;
   dismissToast: () => void;
-  markSaved: () => void;
+  markSaved: (savedAt?: number) => void;
+  markSavePending: () => void;
+  markSaveFailed: (error: string) => void;
 
   select: (comps: string[], wires: string[], additive?: boolean) => void;
   selectComp: (id: string, additive?: boolean) => void;
@@ -242,6 +297,9 @@ interface EditorState {
   clearSelection: () => void;
   deleteSelection: () => void;
   duplicateSelection: () => void;
+  copySelection: () => boolean;
+  cutSelection: () => boolean;
+  pasteClipboard: () => boolean;
   rotateSelection: (steps: number) => void;
   nudgeSelection: (dx: number, dy: number) => void;
   splitWire: (wireId: string, at: Point) => void;
@@ -255,7 +313,7 @@ interface EditorState {
 }
 
 const prefs = loadPrefs();
-const savedProject = loadSavedProject();
+const savedProject = loadSavedProject(prefs.lang);
 const initialDoc = savedProject?.circuits[savedProject.current] ?? emptyDoc(tr(prefs.lang, 'doc.untitled'));
 const initialCircuits = savedProject
   ? Object.fromEntries(Object.entries(savedProject.circuits).map(([id, d]) => [id, cloneDoc(d)]))
@@ -279,6 +337,13 @@ function normalizeProject(circuits: Record<string, Doc>): Record<string, Doc> {
 }
 
 const initialNormalized = normalizeProject(initialCircuits);
+
+let clipboard: ClipboardData | null = null;
+let pasteSerial = 0;
+
+export function hasClipboardData(): boolean {
+  return !!clipboard && (clipboard.comps.length > 0 || clipboard.wires.length > 0);
+}
 
 export const useEditor = create<EditorState>((set, get) => ({
   doc: cloneDoc(initialNormalized[initialCurrent] ?? initialDoc),
@@ -311,6 +376,9 @@ export const useEditor = create<EditorState>((set, get) => ({
       Object.values(savedProject.circuits).some((d) => d.comps.length > 0 || d.wires.length > 0)),
   toast: null,
   lastSaved: 0,
+  saveError: null,
+  savePending: false,
+  autosaveBlocked: autosaveIsBlocked(),
   cursorWorld: null,
   simTick: 0,
   menu: null,
@@ -361,25 +429,25 @@ export const useEditor = create<EditorState>((set, get) => ({
       selWires: [],
       pendingKind: null,
       welcomeClosed: closed,
+      autosaveBlocked: false,
     });
     sim.reset();
   },
 
   loadProject: (project) => {
+    const lang = get().lang;
+    const sanitized = sanitizeProject(project, lang);
+    if (!sanitized) {
+      get().toastMsg(tr(lang, 'file.invalidProject'), 'error');
+      return false;
+    }
     setWelcomeSeen(true);
-    const circuits: Record<string, Doc> = {};
-    for (const [id, doc] of Object.entries(project.circuits)) {
-      if (validDoc(doc)) circuits[id] = cloneDoc(doc);
-    }
-    let order = Array.from(new Set(project.order.filter((id) => circuits[id])));
-    for (const id of Object.keys(circuits)) if (!order.includes(id)) order.push(id);
-    if (!order.length) order = Object.keys(circuits);
-    if (!order.length) {
-      get().toastMsg(tr(get().lang, 'file.invalidProject'), 'error');
-      return;
-    }
-    const current = circuits[project.current] ? project.current : order[0];
-    const normalized = normalizeProject(circuits);
+    const circuits = sanitized.project.circuits;
+    const normalized = normalizeProject(
+      Object.fromEntries(Object.entries(circuits).map(([id, doc]) => [id, cloneDoc(doc)])),
+    );
+    const order = sanitized.project.order;
+    const current = circuits[sanitized.project.current] ? sanitized.project.current : order[0];
     set({
       doc: normalized[current],
       circuits: normalized,
@@ -392,8 +460,16 @@ export const useEditor = create<EditorState>((set, get) => ({
       pendingKind: null,
       welcomeClosed: true,
       running: false,
+      autosaveBlocked: false,
     });
     sim.reset();
+    if (sanitized.warnings.length) {
+      get().toastMsg(
+        tr(lang, 'project.repaired', { details: sanitized.warnings.join(' · ') }),
+        'warn',
+      );
+    }
+    return true;
   },
 
   newDoc: () => {
@@ -411,6 +487,7 @@ export const useEditor = create<EditorState>((set, get) => ({
       pendingKind: null,
       welcomeClosed: true,
       running: false,
+      autosaveBlocked: false,
     });
     sim.reset();
   },
@@ -622,7 +699,9 @@ export const useEditor = create<EditorState>((set, get) => ({
   toastMsg: (text, tone = 'info') =>
     set({ toast: { id: Date.now() + Math.random(), text, tone } }),
   dismissToast: () => set({ toast: null }),
-  markSaved: () => set({ lastSaved: Date.now() }),
+  markSaved: (savedAt = Date.now()) => set({ lastSaved: savedAt, saveError: null, savePending: false }),
+  markSavePending: () => set({ savePending: true }),
+  markSaveFailed: (error) => set({ saveError: error, savePending: false }),
 
   select: (comps, wires, additive = false) =>
     set((s) => ({
@@ -716,12 +795,10 @@ export const useEditor = create<EditorState>((set, get) => ({
   duplicateSelection: () => {
     const { selComps, selWires, doc } = get();
     if (!selComps.length && !selWires.length) return;
-    const idMap = new Map<string, string>();
     const comps = doc.comps
       .filter((c) => selComps.includes(c.id))
       .map((c) => {
         const nid = uid('c');
-        idMap.set(c.id, nid);
         return { ...structuredClone(c), id: nid, at: { x: c.at.x + 20, y: c.at.y + 20 } };
       });
     const wires = doc.wires
@@ -737,6 +814,39 @@ export const useEditor = create<EditorState>((set, get) => ({
       d.wires.push(...wires);
     });
     set({ selComps: comps.map((c) => c.id), selWires: wires.map((w) => w.id) });
+  },
+
+  copySelection: () => {
+    const { doc, selComps, selWires } = get();
+    const payload = extractSelection(doc, selComps, selWires);
+    if (!payload) return false;
+    clipboard = payload;
+    pasteSerial = 0;
+    return true;
+  },
+
+  cutSelection: () => {
+    const state = get();
+    if (!state.copySelection()) return false;
+    state.mutate((d) => {
+      d.comps = d.comps.filter((c) => !state.selComps.includes(c.id));
+      d.wires = d.wires.filter((w) => !state.selWires.includes(w.id));
+    });
+    set({ selComps: [], selWires: [] });
+    return true;
+  },
+
+  pasteClipboard: () => {
+    if (!clipboard) return false;
+    const result = pasteData(clipboard, 20 + pasteSerial * 10);
+    if (!result) return false;
+    pasteSerial += 1;
+    get().mutate((d) => {
+      d.comps.push(...result.comps);
+      d.wires.push(...result.wires);
+    });
+    set({ selComps: result.selComps, selWires: result.selWires });
+    return true;
   },
 
   rotateSelection: (steps) => {

@@ -94,6 +94,7 @@ export function Shortcuts() {
           </Group>
           <Group title={t('shortcuts.group.edit')}>
             <Row label={t('shortcuts.undoRedo')} keys={<><K>⌘Z</K><K>⇧⌘Z</K></>} />
+            <Row label={t('shortcuts.cutCopyPaste')} keys={<><K>⌘X</K><K>⌘C</K><K>⌘V</K></>} />
             <Row label={t('shortcuts.duplicate')} keys={<K>⌘D</K>} />
             <Row label={t('shortcuts.selectAll')} keys={<K>⌘A</K>} />
             <Row label={t('shortcuts.delete')} keys={<K>⌫</K>} />
@@ -109,6 +110,7 @@ export function Shortcuts() {
             <Row label={t('shortcuts.open')} keys={<K>⌘O</K>} />
             <Row label={t('shortcuts.export')} keys={<K>⌘E</K>} />
             <Row label={t('shortcuts.run')} keys={<K>⌘↩</K>} />
+            <Row label={t('shortcuts.step')} keys={<span className="text-[11px] text-[var(--text-faint)]">{t('topbar.command')}</span>} />
             <Row label={t('shortcuts.panel')} keys={<K>?</K>} />
           </Group>
         </div>

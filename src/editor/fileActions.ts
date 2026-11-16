@@ -1,9 +1,9 @@
 import { downloadText, exportCirc, importCirc, safeFilename } from './circ';
 import { itemCount, tr, type MessageKey } from '../i18n';
-import { projectFromNamedDocs, useEditor, type ProjectData } from './store';
+import { projectFromNamedDocs, useEditor } from './store';
+import { sanitizeProject } from './project';
 import { sim } from '../model/sim';
 import { viewControls } from '../canvas/view';
-import type { Doc } from '../model/types';
 import { SPEC_BY_KIND } from '../model/specs';
 import type { Template } from './templates';
 
@@ -39,16 +39,6 @@ function tx(lang: 'zh' | 'en', key: MessageKey, vars?: Record<string, string | n
   return tr(lang, key, vars);
 }
 
-function validProject(p: unknown): p is ProjectData {
-  const project = p as ProjectData | null;
-  return (
-    !!project &&
-    !!project.circuits &&
-    typeof project.circuits === 'object' &&
-    Array.isArray(project.order)
-  );
-}
-
 export function saveProject() {
   const st = useEditor.getState();
   const project = st.snapshotProject();
@@ -60,7 +50,6 @@ export function saveProject() {
     doc: st.doc,
   };
   downloadText(safeFilename(st.doc.name, '.json'), JSON.stringify(payload, null, 2), 'application/json');
-  st.markSaved();
   st.toastMsg(tx(st.lang, 'file.saved'), 'success');
 }
 
@@ -73,39 +62,29 @@ export function openProject() {
       if (trimmed.startsWith('<')) {
         const result = importCirc(trimmed, name.replace(/\.[^.]+$/, ''), lang);
         const project = projectFromNamedDocs(result.circuits, result.mainName);
-        st.loadProject(project);
+        if (!st.loadProject(project)) return;
         sim.reset();
         const items = itemCount(lang, result.supported, '个元件', 'component');
+        const warnings = result.warnings.slice(0, 4).join(' · ');
+        const extra = result.warnings.length > 4 ? ` · +${result.warnings.length - 4}` : '';
         st.toastMsg(
           result.warnings.length
-            ? tx(lang, 'file.importedWarn', { items, warning: result.warnings[0] })
+            ? tx(lang, 'file.importedWarn', { items, warning: warnings + extra })
             : tx(lang, 'file.imported', { items }),
           result.warnings.length ? 'warn' : 'success',
         );
         if (result.warnings.length) console.warn('[Logisim Studio] .circ import:', result.warnings);
       } else {
-        let parsed: { project?: unknown; doc?: Doc; circuits?: unknown; current?: string } | Doc;
+        let parsed: unknown;
         try {
           parsed = JSON.parse(trimmed);
         } catch {
           throw new Error(tx(lang, 'file.invalidProject'));
         }
-        const p = parsed as { project?: unknown; doc?: Doc; circuits?: unknown; current?: string };
-        if (p.project && validProject(p.project)) {
-          st.loadProject(p.project);
-        } else if (p.circuits && typeof p.circuits === 'object' && !Array.isArray(p.circuits)) {
-          const circuits = p.circuits as Record<string, Doc>;
-          const order = Object.keys(circuits);
-          const first = order[0];
-          if (!first) throw new Error(tx(lang, 'file.invalidProject'));
-          st.loadProject({ circuits, order, current: p.current && circuits[p.current] ? p.current : first });
-        } else {
-          const doc: Doc = (p as { doc?: Doc }).doc ?? (p as Doc);
-          if (!doc || !Array.isArray(doc.comps) || !Array.isArray(doc.wires)) {
-            throw new Error(tx(lang, 'file.invalidProject'));
-          }
-          st.loadDoc(doc, { welcomeClosed: true });
-        }
+        const sanitized = sanitizeProject(parsed, lang);
+        if (!sanitized) throw new Error(tx(lang, 'file.invalidProject'));
+        if (!st.loadProject(sanitized.project)) return;
+        if (sanitized.warnings.length) console.warn('[Logisim Studio] project import:', sanitized.warnings);
         sim.reset();
         st.toastMsg(tx(lang, 'file.opened'), 'success');
       }

@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { useEditor, saveProjectToStorage } from './editor/store';
+import { useEditor, saveProjectToStorage, takeStorageNotice } from './editor/store';
 import { Topbar } from './ui/Topbar';
 import { Sidebar } from './ui/Sidebar';
 import { Canvas } from './ui/CanvasHost';
@@ -27,6 +27,10 @@ export default function App() {
   const setSidebar = useEditor((s) => s.setSidebar);
   const setInspector = useEditor((s) => s.setInspector);
   const markSaved = useEditor((s) => s.markSaved);
+  const saveError = useEditor((s) => s.saveError);
+  const markSavePending = useEditor((s) => s.markSavePending);
+  const markSaveFailed = useEditor((s) => s.markSaveFailed);
+  const autosaveBlocked = useEditor((s) => s.autosaveBlocked);
   const lang = useEditor((s) => s.lang);
   const { t } = useT();
   const resolvedTheme = useResolvedAppearance();
@@ -48,18 +52,42 @@ export default function App() {
   }, [doc.name, t]);
 
   useEffect(() => {
+    if (autosaveBlocked) return;
     const t = window.setTimeout(() => {
-      saveProjectToStorage(useEditor.getState().snapshotProject());
-      markSaved();
+      markSavePending();
+      const result = saveProjectToStorage(useEditor.getState().snapshotProject());
+      if (result.ok) markSaved(result.savedAt);
+      else markSaveFailed(result.error ?? 'unknown storage error');
     }, 450);
     return () => window.clearTimeout(t);
-  }, [doc, circuits, circuitOrder, markSaved]);
+  }, [doc, circuits, circuitOrder, markSaved, markSavePending, markSaveFailed, autosaveBlocked]);
 
   useEffect(() => {
-    const saveNow = () => saveProjectToStorage(useEditor.getState().snapshotProject());
+    if (!saveError) return;
+    useEditor.getState().toastMsg(`${t('save.failed')}\n${t('save.failedHint')}`, 'error');
+  }, [saveError, t]);
+
+  useEffect(() => {
+    const notice = takeStorageNotice();
+    if (notice) useEditor.getState().toastMsg(notice, 'warn');
+  }, []);
+
+  useEffect(() => {
+    const saveNow = (e: BeforeUnloadEvent) => {
+      if (useEditor.getState().autosaveBlocked) {
+        e.preventDefault();
+        e.returnValue = t('save.paused');
+        return;
+      }
+      const result = saveProjectToStorage(useEditor.getState().snapshotProject());
+      if (!result.ok) {
+        e.preventDefault();
+        e.returnValue = t('save.failedHint');
+      }
+    };
     window.addEventListener('beforeunload', saveNow);
     return () => window.removeEventListener('beforeunload', saveNow);
-  }, []);
+  }, [t]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {

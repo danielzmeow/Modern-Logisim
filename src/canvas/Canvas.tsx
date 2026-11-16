@@ -687,6 +687,26 @@ export default function Canvas() {
       const meta = e.metaKey || e.ctrlKey;
       if (meta) {
         const k = e.key.toLowerCase();
+        if (k === 'c') {
+          if (st.selComps.length || st.selWires.length) {
+            e.preventDefault();
+            st.copySelection();
+          }
+          return;
+        }
+        if (k === 'x') {
+          if (st.selComps.length || st.selWires.length) {
+            e.preventDefault();
+            st.cutSelection();
+            invalidate();
+          }
+          return;
+        }
+        if (k === 'v') {
+          e.preventDefault();
+          if (st.pasteClipboard()) invalidate();
+          return;
+        }
         if (k === 'z') {
           e.preventDefault();
           if (e.shiftKey) st.redo();

@@ -11,7 +11,9 @@ import { useFocusTrap } from './useFocusTrap';
 import {
   Boxes,
   CheckSquare,
+  ClipboardPaste,
   Copy,
+  Scissors,
   FunctionSquare,
   Plus,
   Table2,
@@ -31,6 +33,7 @@ import {
   Scan,
   Search,
   Sparkles,
+  StepForward,
   Trash2,
   Undo2,
   Redo2,
@@ -126,6 +129,18 @@ export function CommandPalette() {
         icon: iconWrap(RotateCcw, 'var(--text-muted)'),
         run: closeThen(() => {
           sim.reset();
+          viewControls.invalidate();
+        }),
+      },
+      {
+        id: 'step',
+        group: t('palette.group.sim'),
+        label: t('palette.step'),
+        sub: t('palette.stepSub'),
+        keywords: 'step tick clock 单步 时钟 推进',
+        icon: iconWrap(StepForward, 'var(--text-muted)'),
+        run: closeThen(() => {
+          sim.step();
           viewControls.invalidate();
         }),
       },
@@ -231,6 +246,42 @@ export function CommandPalette() {
         shortcut: 'R',
         run: closeThen(() => {
           st().rotateSelection(1);
+          viewControls.invalidate();
+        }),
+      },
+      {
+        id: 'cut',
+        group: t('palette.group.edit'),
+        label: t('palette.cut'),
+        sub: t('palette.cutSub'),
+        keywords: 'cut 剪切',
+        icon: iconWrap(Scissors, 'var(--text-muted)'),
+        shortcut: '⌘X',
+        run: closeThen(() => {
+          st().cutSelection();
+          viewControls.invalidate();
+        }),
+      },
+      {
+        id: 'copy',
+        group: t('palette.group.edit'),
+        label: t('palette.copy'),
+        sub: t('palette.copySub'),
+        keywords: 'copy 复制 剪贴板',
+        icon: iconWrap(Copy, 'var(--text-muted)'),
+        shortcut: '⌘C',
+        run: closeThen(() => st().copySelection()),
+      },
+      {
+        id: 'paste',
+        group: t('palette.group.edit'),
+        label: t('palette.paste'),
+        sub: t('palette.pasteSub'),
+        keywords: 'paste 粘贴 剪贴板',
+        icon: iconWrap(ClipboardPaste, 'var(--text-muted)'),
+        shortcut: '⌘V',
+        run: closeThen(() => {
+          st().pasteClipboard();
           viewControls.invalidate();
         }),
       },

@@ -109,3 +109,31 @@ describe('wires follow moved components', () => {
     ]);
   });
 });
+
+describe('clipboard actions', () => {
+  it('copies a selection and pastes it into another circuit', () => {
+    const empty: Doc = { version: 1, name: 'Empty', comps: [], wires: [] };
+    const source: Doc = {
+      version: 1,
+      name: 'Source',
+      comps: [createComp('input', { x: 0, y: 0 }), createComp('output', { x: 100, y: 0 }, 'west')],
+      wires: [{ id: 'w', a: { x: 0, y: 0 }, b: { x: 100, y: 0 } }],
+    };
+    expect(
+      useEditor.getState().loadProject({
+        current: 'a',
+        circuits: { a: source, b: empty },
+        order: ['a', 'b'],
+      }),
+    ).toBe(true);
+    useEditor.getState().selectAll();
+    expect(useEditor.getState().copySelection()).toBe(true);
+    useEditor.getState().switchCircuit('b');
+    expect(useEditor.getState().pasteClipboard()).toBe(true);
+    const pasted = useEditor.getState().doc;
+    expect(pasted.comps).toHaveLength(2);
+    expect(pasted.wires).toHaveLength(1);
+    expect(pasted.comps.map((c) => c.kind)).toEqual(['input', 'output']);
+    expect(pasted.comps[0].id).not.toBe(source.comps[0].id);
+  });
+});

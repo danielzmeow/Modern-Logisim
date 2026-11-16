@@ -8,6 +8,7 @@ import { itemCount } from '../i18n';
 import { useT } from './useT';
 import {
   CheckSquare,
+  ClipboardPaste,
   Copy,
   Grid3x3,
   Pause,
@@ -186,6 +187,25 @@ export function ContextMenu() {
               </>
             )}
             <Item
+              icon={Scissors}
+              label={t('menu.cut')}
+              shortcut="⌘X"
+              onClick={() => {
+                st().cutSelection();
+                close();
+                viewControls.invalidate();
+              }}
+            />
+            <Item
+              icon={Copy}
+              label={t('menu.copy')}
+              shortcut="⌘C"
+              onClick={() => {
+                st().copySelection();
+                close();
+              }}
+            />
+            <Item
               icon={Copy}
               label={t('common.duplicate')}
               shortcut="⌘D"
@@ -295,6 +315,16 @@ export function ContextMenu() {
               shortcut="⌘A"
               onClick={() => {
                 st().selectAll();
+                close();
+                viewControls.invalidate();
+              }}
+            />
+            <Item
+              icon={ClipboardPaste}
+              label={t('menu.paste')}
+              shortcut="⌘V"
+              onClick={() => {
+                st().pasteClipboard();
                 close();
                 viewControls.invalidate();
               }}

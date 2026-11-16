@@ -14,6 +14,7 @@ import {
   RotateCcw,
   Save,
   Search,
+  StepForward,
   Undo2,
 } from 'lucide-react';
 
@@ -24,6 +25,9 @@ export function Topbar() {
   const toggleRunning = useEditor((s) => s.toggleRunning);
   const past = useEditor((s) => s.past.length);
   const future = useEditor((s) => s.future.length);
+  const saveError = useEditor((s) => s.saveError);
+  const savePending = useEditor((s) => s.savePending);
+  const autosaveBlocked = useEditor((s) => s.autosaveBlocked);
   const undo = useEditor((s) => s.undo);
   const redo = useEditor((s) => s.redo);
   const setPaletteOpen = useEditor((s) => s.setPaletteOpen);
@@ -60,8 +64,20 @@ export function Topbar() {
           onFocus={(e) => e.currentTarget.select()}
         />
         <div className="hidden items-center gap-1.5 pl-1 text-[11px] font-medium text-[var(--text-secondary)] lg:flex">
-          <span className="h-[5px] w-[5px] rounded-full bg-[var(--success)]" />
-          {t('doc.autosave')}
+          <span
+            className={`h-[5px] w-[5px] rounded-full ${
+              saveError || autosaveBlocked ? 'bg-[var(--danger)]' : 'bg-[var(--success)]'
+            }`}
+          />
+          <span className={saveError || autosaveBlocked ? 'text-[var(--danger-text)]' : ''}>
+            {saveError
+              ? t('save.failed')
+              : autosaveBlocked
+                ? t('save.paused')
+                : savePending
+                  ? t('doc.saving')
+                  : t('doc.autosave')}
+          </span>
         </div>
       </div>
 
@@ -85,6 +101,16 @@ export function Topbar() {
         </button>
         <button className="icon-btn" title={t('topbar.reset')} onClick={resetSim}>
           <RotateCcw size={15} strokeWidth={1.9} />
+        </button>
+        <button
+          className="icon-btn"
+          title={t('topbar.step')}
+          onClick={() => {
+            sim.step();
+            viewControls.invalidate();
+          }}
+        >
+          <StepForward size={15} strokeWidth={1.9} />
         </button>
 
         <div className="divider-v hidden md:block" />
