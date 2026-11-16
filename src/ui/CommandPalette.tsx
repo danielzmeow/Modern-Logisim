@@ -4,7 +4,7 @@ import { SPECS, specDesc, specName } from '../model/specs';
 import { CompIcon } from './icons';
 import { viewControls } from '../canvas/view';
 import { exportCircFile, loadTemplate, newCircuit, openProject, saveProject } from '../editor/fileActions';
-import { exportPngFile } from '../editor/imageExport';
+import { exportPngFile, printCircuit } from '../editor/imageExport';
 import { TEMPLATES, templateName, templateNote } from '../editor/templates';
 import { sim } from '../model/sim';
 import { useT } from './useT';
@@ -29,6 +29,7 @@ import {
   Moon,
   Pause,
   Play,
+  Printer,
   RotateCcw,
   RotateCw,
   Scan,
@@ -394,6 +395,15 @@ export function CommandPalette() {
             st().toastMsg(t('file.pngFailed'), 'error');
           });
         }),
+      },
+      {
+        id: 'print',
+        group: t('palette.group.file'),
+        label: t('palette.print'),
+        sub: t('palette.printSub'),
+        keywords: 'print printer paper 打印',
+        icon: iconWrap(Printer, 'var(--text-muted)'),
+        run: closeThen(printCircuit),
       },
       {
         id: 'new',

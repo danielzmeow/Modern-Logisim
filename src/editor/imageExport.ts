@@ -17,13 +17,13 @@ function downloadBlob(blob: Blob, filename: string) {
   setTimeout(() => URL.revokeObjectURL(url), 2000);
 }
 
-/** Render the current circuit to an offscreen canvas and download a PNG. */
-export async function exportPngFile() {
+/** Render the current circuit to an offscreen canvas. */
+function renderCircuitCanvas(): HTMLCanvasElement | null {
   const st = useEditor.getState();
   const bounds = contentBounds(st.doc);
   if (!bounds) {
     st.toastMsg(tr(st.lang, 'file.pngEmpty'), 'warn');
-    return;
+    return null;
   }
   const layout = computePngLayout(bounds);
   const canvas = document.createElement('canvas');
@@ -32,7 +32,7 @@ export async function exportPngFile() {
   const ctx = canvas.getContext('2d');
   if (!ctx) {
     st.toastMsg(tr(st.lang, 'file.pngFailed'), 'error');
-    return;
+    return null;
   }
   sim.ensure(st.doc, st.circuits);
   drawScene({
@@ -52,6 +52,14 @@ export async function exportPngFile() {
     now: 0,
     lang: st.lang,
   });
+  return canvas;
+}
+
+/** Render the current circuit to an offscreen canvas and download a PNG. */
+export async function exportPngFile() {
+  const st = useEditor.getState();
+  const canvas = renderCircuitCanvas();
+  if (!canvas) return;
   await new Promise<void>((resolve) => {
     canvas.toBlob((blob) => {
       if (!blob) {
@@ -64,4 +72,35 @@ export async function exportPngFile() {
       resolve();
     }, 'image/png');
   });
+}
+
+/** Print the current circuit using a hidden iframe to avoid pop-up blockers. */
+export function printCircuit() {
+  const st = useEditor.getState();
+  const canvas = renderCircuitCanvas();
+  if (!canvas) return;
+  try {
+    const data = canvas.toDataURL('image/png');
+    const iframe = document.createElement('iframe');
+    iframe.setAttribute('aria-hidden', 'true');
+    iframe.style.cssText = 'position:fixed;width:0;height:0;border:0;visibility:hidden';
+    document.body.appendChild(iframe);
+    const doc = iframe.contentDocument;
+    if (!doc) {
+      iframe.remove();
+      st.toastMsg(tr(st.lang, 'file.printFailed'), 'error');
+      return;
+    }
+    doc.open();
+    doc.write(
+      `<!doctype html><html><head><title>${st.doc.name.replace(/[<&>]/g, '')}</title>` +
+        `<style>@page{margin:12mm}html,body{margin:0}img{max-width:100%;height:auto;display:block;margin:0 auto}</style>` +
+        `</head><body><img src="${data}" onload="setTimeout(function(){window.print()},80)"></body></html>`,
+    );
+    doc.close();
+    setTimeout(() => iframe.remove(), 60_000);
+  } catch (err) {
+    console.error(err);
+    st.toastMsg(tr(st.lang, 'file.printFailed'), 'error');
+  }
 }
