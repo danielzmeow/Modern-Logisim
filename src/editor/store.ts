@@ -29,6 +29,15 @@ const DOC_BACKUP_KEY = 'logisim-studio.doc.v1.backup';
 const PREFS_KEY = 'logisim-studio.prefs.v1';
 const WELCOME_KEY = 'logisim-studio.welcomeSeen.v1';
 type StorageLike = Pick<Storage, 'getItem' | 'setItem'>;
+const emptyStorage: StorageLike = { getItem: () => null, setItem: () => {} };
+function defaultStorage(): StorageLike {
+  try {
+    if (typeof localStorage !== 'undefined') return localStorage;
+  } catch {
+    /* storage unavailable */
+  }
+  return emptyStorage;
+}
 let storageNotice: string | null = null;
 let storageLoadFailed = false;
 export function takeStorageNotice(): string | null {
@@ -103,7 +112,7 @@ function projectFromDoc(doc: Doc): ProjectData {
 
 export function loadSavedProject(
   lang: Lang = detectLang(),
-  storage: StorageLike = localStorage,
+  storage: StorageLike = defaultStorage(),
 ): ProjectData | null {
   let mainInvalid = false;
   const read = (key: string): ProjectData | null => {
@@ -171,7 +180,7 @@ export interface SaveResult {
  */
 export function saveProjectToStorage(
   project: ProjectData,
-  storage: StorageLike = localStorage,
+  storage: StorageLike = defaultStorage(),
 ): SaveResult {
   const savedAt = Date.now();
   try {
