@@ -144,6 +144,59 @@ export function truthTableCsv(table: TruthTable): string {
   return lines.join('\n');
 }
 
+function plaIdentifier(base: string, fallback: string, used: Set<string>): string {
+  const cleaned = base.replace(/[^A-Za-z0-9_]/g, '_');
+  let name = /[A-Za-z0-9]/.test(cleaned) ? cleaned : fallback;
+  if (!/^[A-Za-z_]/.test(name)) name = `_${name}`;
+  let candidate = name;
+  let suffix = 2;
+  while (used.has(candidate)) candidate = `${name}_${suffix++}`;
+  used.add(candidate);
+  return candidate;
+}
+
+/** Export a truth table in the common Berkeley PLA format. */
+export function truthTablePla(table: TruthTable): string {
+  const used = new Set<string>();
+  const inputNames: string[] = [];
+  table.inputs.forEach((input, inputIndex) => {
+    for (let bit = input.bits - 1; bit >= 0; bit--) {
+      const base = input.bits === 1 ? input.label : `${input.label}${bit}`;
+      inputNames.push(plaIdentifier(base, `I${inputIndex}_${bit}`, used));
+    }
+  });
+  const outputNames: string[] = [];
+  table.outputs.forEach((output, outputIndex) => {
+    for (let bit = output.bits - 1; bit >= 0; bit--) {
+      const base = output.bits === 1 ? output.label : `${output.label}${bit}`;
+      outputNames.push(plaIdentifier(base, `O${outputIndex}_${bit}`, used));
+    }
+  });
+  const lines = [
+    `.i ${inputNames.length}`,
+    `.o ${outputNames.length}`,
+    `.ilb ${inputNames.join(' ')}`,
+    `.ob ${outputNames.join(' ')}`,
+  ];
+  for (const row of table.rows) {
+    const inputBits: string[] = [];
+    table.inputs.forEach((input, inputIndex) => {
+      const value = row.inputs[inputIndex] ?? 0;
+      for (let bit = input.bits - 1; bit >= 0; bit--) inputBits.push(String((value >>> bit) & 1));
+    });
+    const outputBits: string[] = [];
+    table.outputs.forEach((output, outputIndex) => {
+      const cell = row.outputs[outputIndex];
+      for (let bit = output.bits - 1; bit >= 0; bit--) {
+        outputBits.push(cell?.state === 'known' ? String((cell.value >>> bit) & 1) : '-');
+      }
+    });
+    lines.push(`${inputBits.join('')} ${outputBits.join('')}`);
+  }
+  lines.push('.e');
+  return lines.join('\n');
+}
+
 export function formatCell(value: number, bits: number): string {
   if (bits === 1) return String(value & 1);
   const digits = Math.ceil(bits / 4);

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useEditor } from '../editor/store';
 import { useT } from './useT';
 import { useFocusTrap } from './useFocusTrap';
-import { buildTruthTable, formatCell, truthTableCsv } from '../analysis/truthTable';
+import { buildTruthTable, formatCell, truthTableCsv, truthTablePla } from '../analysis/truthTable';
 import { minimizeTruthTable } from '../analysis/minimize';
 import { synthesizeEquations } from '../analysis/equations';
 import { viewControls } from '../canvas/view';
@@ -17,6 +17,7 @@ export function TruthTable() {
   const { t, lang } = useT();
   const panelRef = useRef<HTMLDivElement>(null);
   const [copied, setCopied] = useState(false);
+  const [copiedPla, setCopiedPla] = useState(false);
   const [showExpressions, setShowExpressions] = useState(false);
   useFocusTrap(panelRef, open);
 
@@ -33,6 +34,7 @@ export function TruthTable() {
   useEffect(() => {
     if (!open) return;
     setCopied(false);
+    setCopiedPla(false);
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') setOpen(false);
     };
@@ -62,6 +64,17 @@ export function TruthTable() {
       await navigator.clipboard.writeText(truthTableCsv(table));
       setCopied(true);
       useEditor.getState().toastMsg(t('analysis.copied'), 'success');
+    } catch {
+      useEditor.getState().toastMsg(t('analysis.failed'), 'error');
+    }
+  };
+
+  const copyPla = async () => {
+    if (!table) return;
+    try {
+      await navigator.clipboard.writeText(truthTablePla(table));
+      setCopiedPla(true);
+      useEditor.getState().toastMsg(t('analysis.plaCopied'), 'success');
     } catch {
       useEditor.getState().toastMsg(t('analysis.failed'), 'error');
     }
@@ -135,6 +148,9 @@ export function TruthTable() {
             </button>
             <button className="btn btn-soft !h-7 !text-[11px]" onClick={copy} disabled={!table || empty}>
               <ClipboardCopy size={12} /> {copied ? '✓' : t('analysis.copyCsv')}
+            </button>
+            <button className="btn btn-soft !h-7 !text-[11px]" onClick={copyPla} disabled={!table || empty}>
+              <ClipboardCopy size={12} /> {copiedPla ? '✓' : t('analysis.copyPla')}
             </button>
             <button
               autoFocus
