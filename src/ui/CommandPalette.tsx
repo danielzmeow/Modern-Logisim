@@ -4,6 +4,7 @@ import { SPECS, specDesc, specName } from '../model/specs';
 import { CompIcon } from './icons';
 import { viewControls } from '../canvas/view';
 import { exportCircFile, loadTemplate, newCircuit, openProject, saveProject } from '../editor/fileActions';
+import { exportPngFile } from '../editor/imageExport';
 import { TEMPLATES, templateName, templateNote } from '../editor/templates';
 import { sim } from '../model/sim';
 import { useT } from './useT';
@@ -379,6 +380,20 @@ export function CommandPalette() {
         icon: iconWrap(Download, 'var(--text-muted)'),
         shortcut: '⌘E',
         run: closeThen(exportCircFile),
+      },
+      {
+        id: 'exportPng',
+        group: t('palette.group.file'),
+        label: t('palette.exportPng'),
+        sub: t('palette.exportPngSub'),
+        keywords: 'png image picture export 导出 图片 截图',
+        icon: iconWrap(Download, 'var(--text-muted)'),
+        run: closeThen(() => {
+          void exportPngFile().catch((err) => {
+            console.error(err);
+            st().toastMsg(t('file.pngFailed'), 'error');
+          });
+        }),
       },
       {
         id: 'new',
