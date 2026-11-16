@@ -32,7 +32,7 @@
   - 连线：Pin、Probe、Tunnel、Clock、Constant、Power、Ground、Pull Resistor、Bit Extender、分线/合线
   - 选择器：MUX、Decoder、Demux、Priority Encoder、Bit Selector
   - 算术：Adder、Subtractor、Multiplier、Divider、Negator、Bit Adder、Bit Finder、Comparator、Shifter
-  - 存储：DFF、T 触发器、JK 触发器、SR 锁存器、寄存器、移位寄存器、计数器、随机数发生器、RAM、ROM
+  - 存储：DFF、T 触发器、JK 触发器、SR 锁存器、寄存器、移位寄存器、计数器、随机数发生器、RAM、ROM（十六进制编辑器支持分页）
   - I/O：Button、LED、七段数码管（独立 a–g / 7 位总线）、十六进制数码管
 - **层级电路**：项目内可建多个电路，把任意电路拖成子电路；自动生成符号引脚，跨层级仿真
 - **分析工具**：枚举输入生成真值表（支持多位/时序电路，可复制 CSV/PLA）；点击输出位可编辑 0/1/X 无关项；对组合逻辑真值表做布尔化简并生成 SOP 表达式，可直接从化简结果生成新电路；从布尔方程自动生成门级电路

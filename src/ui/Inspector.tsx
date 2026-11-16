@@ -374,25 +374,39 @@ function MemoryField({ comp }: { comp: ComponentInstance }) {
   const simTick = useEditor((s) => s.simTick);
   const addrBits = Math.max(1, Math.min(20, comp.attrs.addrBits ?? 4));
   const dataBits = Math.max(1, Math.min(32, comp.attrs.dataBits ?? 8));
-  const size = Math.min(256, 2 ** addrBits);
+  const total = 1 << addrBits;
+  const pageSize = 256;
+  const pages = Math.max(1, Math.ceil(total / pageSize));
+  const [page, setPage] = useState(0);
+  const pageStart = Math.min(total, page * pageSize);
+  const pageEnd = Math.min(total, pageStart + pageSize);
   const addrDigits = Math.max(1, Math.ceil(addrBits / 4));
   const dataDigits = Math.max(1, Math.ceil(dataBits / 4));
   const fmt = (v: number) => (v >>> 0).toString(16).toUpperCase().padStart(dataDigits, '0');
   const fromValues = (values: number[]) =>
-    Array.from({ length: size }, (_, i) => `${i.toString(16).toUpperCase().padStart(addrDigits, '0')}: ${fmt(values[i] ?? 0)}`).join('\n');
+    Array.from(
+      { length: pageEnd - pageStart },
+      (_, i) =>
+        `${(pageStart + i).toString(16).toUpperCase().padStart(addrDigits, '0')}: ${fmt(values[pageStart + i] ?? 0)}`,
+    ).join('\n');
   const currentValues = () =>
     sim.netOfPort(comp.id, 'dout') >= 0 ? sim.memoryValues(comp) : comp.attrs.memory ?? [];
   const [text, setText] = useState(() => fromValues(currentValues()));
   const [focused, setFocused] = useState(false);
 
   useEffect(() => {
+    setPage(0);
+  }, [comp.id, addrBits]);
+
+  useEffect(() => {
     if (!focused) setText(fromValues(currentValues()));
-  }, [comp, comp.id, focused, simTick, addrBits, dataBits, size]);
+  }, [comp, comp.id, focused, simTick, addrBits, dataBits, pageStart, pageEnd]);
 
   const commit = () => {
     const mask = (2 ** dataBits - 1) >>> 0;
-    const values: number[] = [];
-    let cursor = 0;
+    const source = currentValues();
+    const values = Array.from({ length: total }, (_, i) => source[i] ?? 0);
+    let cursor = pageStart;
     for (const line of text.split(/\r?\n/)) {
       const trimmed = line.trim();
       if (!trimmed) continue;
@@ -400,19 +414,28 @@ function MemoryField({ comp }: { comp: ComponentInstance }) {
       if (addressed) {
         const addr = parseInt(addressed[1], 16);
         const n = parseInt(addressed[2], 16);
-        if (Number.isFinite(addr) && Number.isFinite(n)) values[addr] = n & mask;
+        if (Number.isFinite(addr) && Number.isFinite(n) && addr >= 0 && addr < total) {
+          values[addr] = n & mask;
+        }
         continue;
       }
       for (const token of trimmed.replace(/[;,]/g, ' ').split(/\s+/).filter(Boolean)) {
+        if (cursor >= total) break;
         const n = parseInt(token.replace(/^0x/i, ''), 16);
         values[cursor++] = Number.isFinite(n) ? n & mask : 0;
       }
     }
-    const next = Array.from({ length: Math.min(size, Math.max(cursor, values.length)) }, (_, i) => values[i] ?? 0);
-    useEditor.getState().updateComp(comp.id, { memory: next }, `mem:${comp.id}`);
-    sim.loadMemory(comp, next);
-    setText(fromValues(next));
+    useEditor.getState().updateComp(comp.id, { memory: values }, `mem:${comp.id}`);
+    sim.loadMemory(comp, values);
+    setText(fromValues(values));
     viewControls.invalidate();
+  };
+
+  const changePage = (next: number) => {
+    if (next === page) return;
+    if (focused) commit();
+    setFocused(false);
+    setPage(Math.max(0, Math.min(pages - 1, next)));
   };
 
   return (
@@ -420,7 +443,7 @@ function MemoryField({ comp }: { comp: ComponentInstance }) {
       <div className="mb-1 flex items-center justify-between">
         <span className="text-[11px] text-[var(--text-muted)]">{t('inspector.memory')}</span>
         <span className="font-mono text-[10px] text-[var(--text-faint)]">
-          {t('inspector.memoryCells', { n: 1 << addrBits })}
+          {t('inspector.memoryCells', { n: total })}
         </span>
       </div>
       <textarea
@@ -434,6 +457,30 @@ function MemoryField({ comp }: { comp: ComponentInstance }) {
           commit();
         }}
       />
+      {pages > 1 && (
+        <div className="mt-1 flex items-center justify-between gap-2 text-[10.5px] text-[var(--text-muted)]">
+          <button
+            className="icon-btn !h-6 !w-6"
+            disabled={page === 0}
+            title={t('inspector.prevPage')}
+            onClick={() => changePage(page - 1)}
+          >
+            ‹
+          </button>
+          <span className="font-mono tabular-nums">
+            0x{pageStart.toString(16).toUpperCase().padStart(addrDigits, '0')} – 0x
+            {(pageEnd - 1).toString(16).toUpperCase().padStart(addrDigits, '0')}
+          </span>
+          <button
+            className="icon-btn !h-6 !w-6"
+            disabled={page >= pages - 1}
+            title={t('inspector.nextPage')}
+            onClick={() => changePage(page + 1)}
+          >
+            ›
+          </button>
+        </div>
+      )}
       <div className="mt-1 text-[11px] leading-[1.45] text-[var(--text-faint)]">
         {t('inspector.memoryHint')}
       </div>

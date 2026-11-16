@@ -49,8 +49,8 @@
 ### 2.5 存储
 
 - 已实现：D Flip-Flop、T Flip-Flop、J-K Flip-Flop、S-R Latch、Register、Shift Register、Counter（上/下计数）、Random Generator、RAM、ROM。
-- 已实现：RAM/ROM 内容的十六进制编辑器；RAM 运行时可写。
-- 未实现：Memory 的 OE/分页编辑器。
+- 已实现：RAM/ROM 内容的十六进制编辑器，按 256 个单元分页浏览完整地址空间；RAM 运行时可写。
+- 未实现：Memory 的 OE 编辑器。
 - 部分：Shift Register 为串行移入、并行输出；ROM 存储内容可按 Logisim `addr/data` 格式导入导出，RAM 运行时内容仍只保存在项目 JSON 中。
 
 ### 2.6 输入/输出

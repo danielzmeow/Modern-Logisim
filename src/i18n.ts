@@ -438,6 +438,8 @@ export const messages = {
     'equations.hint': '生成的电路会作为新电路加入项目，不会覆盖当前画布。',
 
     'inspector.memory': '存储器内容',
+    'inspector.prevPage': '上一页',
+    'inspector.nextPage': '下一页',
     'inspector.memoryHint': '每行一个十六进制值；改动会立即用于仿真。',
     'inspector.memoryAddr': '地址',
     'inspector.signExtend': '符号扩展',
@@ -942,6 +944,8 @@ export const messages = {
     'equations.hint': 'The generated circuit is added as a new circuit; your current canvas stays untouched.',
 
     'inspector.memory': 'Memory contents',
+    'inspector.prevPage': 'Previous page',
+    'inspector.nextPage': 'Next page',
     'inspector.memoryHint': 'One hexadecimal value per line; changes apply to simulation immediately.',
     'inspector.memoryAddr': 'Address',
     'inspector.signExtend': 'Sign extend',
