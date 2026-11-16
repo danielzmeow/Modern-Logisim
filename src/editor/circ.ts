@@ -188,6 +188,21 @@ export function importCirc(
         const trig = attr(el, 'trigger') ?? 'rising';
         comp.attrs.trigger = trig === 'falling' || trig === 'low' ? 'falling' : 'rising';
         comp.attrs.label = label ?? '';
+      } else if (name === 'T Flip-Flop' || name === 'J-K Flip-Flop') {
+        comp = createComp(name === 'T Flip-Flop' ? 'tff' : 'jkff', loc, facing);
+        const trig = attr(el, 'trigger') ?? 'rising';
+        comp.attrs.trigger = trig === 'falling' || trig === 'low' ? 'falling' : 'rising';
+        comp.attrs.label = label ?? '';
+      } else if (name === 'S-R Latch') {
+        comp = createComp('sr', loc, facing);
+        comp.attrs.label = label ?? '';
+      } else if (name === 'Shift Register') {
+        comp = createComp('shift', loc, facing);
+        comp.attrs.bits = Math.max(1, Math.min(32, num(attr(el, 'width'), 8)));
+        comp.attrs.trigger = (attr(el, 'trigger') ?? 'rising') === 'falling' ? 'falling' : 'rising';
+        comp.attrs.enable = attr(el, 'enable') !== 'false';
+        comp.attrs.reset = attr(el, 'reset') !== 'false';
+        comp.attrs.label = label ?? '';
       } else if (name === 'Register') {
         comp = createComp('register', loc, facing);
         comp.attrs.bits = Math.max(1, Math.min(32, num(attr(el, 'width'), 8)));
@@ -234,6 +249,11 @@ export function importCirc(
         comp.attrs.label = label ?? '';
       } else if (name === 'Adder' || name === 'Subtractor' || name === 'Multiplier' || name === 'Comparator') {
         const kind = name === 'Adder' ? 'adder' : name === 'Subtractor' ? 'subtractor' : name === 'Multiplier' ? 'multiplier' : 'comparator';
+        comp = createComp(kind, loc, facing);
+        comp.attrs.bits = Math.max(1, Math.min(32, num(attr(el, 'width'), 8)));
+        comp.attrs.label = label ?? '';
+      } else if (name === 'Divider' || name === 'Negator' || name === 'Bit Adder') {
+        const kind = name === 'Divider' ? 'divider' : name === 'Negator' ? 'negator' : 'bitAdder';
         comp = createComp(kind, loc, facing);
         comp.attrs.bits = Math.max(1, Math.min(32, num(attr(el, 'width'), 8)));
         comp.attrs.label = label ?? '';
@@ -369,8 +389,8 @@ const LIB: Record<CompKind, string> = {
   not: '1', and: '1', or: '1', nand: '1', nor: '1', xor: '1', xnor: '1', buffer: '1', odd: '1', even: '1',
   ctrlBuffer: '1', ctrlInverter: '1',
   mux: '2', decoder: '2', demux: '2', priority: '2', bitSelect: '2',
-  adder: '3', subtractor: '3', multiplier: '3', comparator: '3', shifter: '3',
-  dff: '4', register: '4', counter: '4', ram: '4', rom: '4',
+  adder: '3', subtractor: '3', multiplier: '3', divider: '3', negator: '3', bitAdder: '3', comparator: '3', shifter: '3',
+  dff: '4', tff: '4', jkff: '4', sr: '4', shift: '4', register: '4', counter: '4', ram: '4', rom: '4',
   led: '5', button: '5', sevenseg: '5',
   text: '6', sub: '-',
 };
@@ -463,6 +483,26 @@ function compToXml(c: ComponentInstance, circuits: Record<string, Doc>): { xml: 
       name = 'D Flip-Flop';
       attrs.push(['facing', facingAttr], ['trigger', c.attrs.trigger ?? 'rising'], ['label', label]);
       break;
+    case 'tff':
+    case 'jkff':
+      name = c.kind === 'tff' ? 'T Flip-Flop' : 'J-K Flip-Flop';
+      attrs.push(['facing', facingAttr], ['trigger', c.attrs.trigger ?? 'rising'], ['label', label]);
+      break;
+    case 'sr':
+      name = 'S-R Latch';
+      attrs.push(['facing', facingAttr], ['label', label]);
+      break;
+    case 'shift':
+      name = 'Shift Register';
+      attrs.push(
+        ['facing', facingAttr],
+        ['width', c.attrs.bits ?? 8],
+        ['trigger', c.attrs.trigger ?? 'rising'],
+        ['enable', c.attrs.enable !== false ? 'true' : 'false'],
+        ['reset', c.attrs.reset !== false ? 'true' : 'false'],
+        ['label', label],
+      );
+      break;
     case 'register':
       name = 'Register';
       attrs.push(['facing', facingAttr], ['width', c.attrs.bits ?? 8], ['trigger', c.attrs.trigger ?? 'rising']);
@@ -502,8 +542,11 @@ function compToXml(c: ComponentInstance, circuits: Record<string, Doc>): { xml: 
     case 'adder':
     case 'subtractor':
     case 'multiplier':
+    case 'divider':
+    case 'negator':
+    case 'bitAdder':
     case 'comparator':
-      name = c.kind === 'adder' ? 'Adder' : c.kind === 'subtractor' ? 'Subtractor' : c.kind === 'multiplier' ? 'Multiplier' : 'Comparator';
+      name = c.kind === 'adder' ? 'Adder' : c.kind === 'subtractor' ? 'Subtractor' : c.kind === 'multiplier' ? 'Multiplier' : c.kind === 'divider' ? 'Divider' : c.kind === 'negator' ? 'Negator' : c.kind === 'bitAdder' ? 'Bit Adder' : 'Comparator';
       attrs.push(['facing', facingAttr], ['width', c.attrs.bits ?? 8], ['label', label]);
       break;
     case 'shifter':

@@ -116,6 +116,61 @@ describe('new arithmetic and memory components', () => {
     expect(sim.valueOfPort(carry.id, 'in').value).toBe(1);
   });
 
+  it('negator computes two\'s-complement negation', () => {
+    const doc: Doc = { version: 1, name: 'neg', comps: [], wires: [] };
+    const input = createComp('input', { x: 0, y: 0 }, 'east', 'en', { bits: 4 });
+    const neg = createComp('negator', { x: 120, y: 0 }, 'east', 'en', { bits: 4 });
+    const out = createComp('output', { x: 240, y: 0 }, 'west', 'en', { bits: 4 });
+    doc.comps.push(input, neg, out);
+    wire(doc, port(input, 'out'), port(neg, 'in'));
+    wire(doc, port(neg, 'out'), port(out, 'in'));
+    const sim = new Simulator();
+    sim.update(doc);
+    sim.setPinValue(input.id, 3);
+    sim.frame(0, false);
+    expect(sim.valueOfPort(out.id, 'in').value).toBe(13);
+  });
+
+  it('divider reports quotient, remainder and division-by-zero errors', () => {
+    const doc: Doc = { version: 1, name: 'div', comps: [], wires: [] };
+    const a = createComp('input', { x: 0, y: 0 }, 'east', 'en', { bits: 8 });
+    const b = createComp('input', { x: 0, y: 50 }, 'east', 'en', { bits: 8 });
+    const div = createComp('divider', { x: 160, y: 10 }, 'east', 'en', { bits: 8 });
+    const q = createComp('output', { x: 300, y: 0 }, 'west', 'en', { bits: 8 });
+    const r = createComp('output', { x: 300, y: 30 }, 'west', 'en', { bits: 8 });
+    doc.comps.push(a, b, div, q, r);
+    wire(doc, port(a, 'out'), port(div, 'a'));
+    wire(doc, port(b, 'out'), port(div, 'b'));
+    wire(doc, port(div, 'out'), port(q, 'in'));
+    wire(doc, port(div, 'rem'), port(r, 'in'));
+    const sim = new Simulator();
+    sim.update(doc);
+    sim.setPinValue(a.id, 17);
+    sim.setPinValue(b.id, 5);
+    sim.frame(0, false);
+    expect(sim.valueOfPort(q.id, 'in').value).toBe(3);
+    expect(sim.valueOfPort(r.id, 'in').value).toBe(2);
+    sim.setPinValue(b.id, 0);
+    sim.frame(1, false);
+    expect(sim.valueOfPort(q.id, 'in').state).toBe('e');
+    expect(sim.valueOfPort(r.id, 'in').state).toBe('e');
+  });
+
+  it('bit adder counts high input bits', () => {
+    const doc: Doc = { version: 1, name: 'popcount', comps: [], wires: [] };
+    const input = createComp('input', { x: 0, y: 0 }, 'east', 'en', { bits: 8 });
+    const pop = createComp('bitAdder', { x: 160, y: 0 }, 'east', 'en', { bits: 8 });
+    const out = createComp('output', { x: 300, y: 0 }, 'west', 'en', { bits: 4 });
+    doc.comps.push(input, pop, out);
+    wire(doc, port(input, 'out'), port(pop, 'in'));
+    wire(doc, port(pop, 'out'), port(out, 'in'));
+    const sim = new Simulator();
+    sim.update(doc);
+    sim.setPinValue(input.id, 0b101101);
+    sim.frame(0, false);
+    expect(sim.valueOfPort(out.id, 'in').value).toBe(4);
+  });
+
   it('register captures a multi-bit value on a clock edge', () => {
     const doc: Doc = { version: 1, name: 'reg', comps: [], wires: [] };
     const d = createComp('input', { x: 0, y: 0 }, 'east', 'en', { bits: 4 });
@@ -397,5 +452,177 @@ describe('wire following while moving components', () => {
     }
     const ends = new Set(doc.wires.flatMap((w) => [`${w.a.x},${w.a.y}`, `${w.b.x},${w.b.y}`]));
     for (const p of portsOf(and)) expect(ends.has(`${p.world.x},${p.world.y}`)).toBe(true);
+  });
+});
+
+describe('manual simulation stepping', () => {
+  it('toggles clocks and captures a flip-flop edge', () => {
+    const doc: Doc = { version: 1, name: 'step', comps: [], wires: [] };
+    const clock = createComp('clock', { x: 0, y: 20 });
+    const one = createComp('power', { x: 80, y: 0 });
+    const dff = createComp('dff', { x: 120, y: 0 });
+    const out = createComp('output', { x: 240, y: 0 }, 'west');
+    doc.comps.push(clock, one, dff, out);
+    wire(doc, port(clock, 'out'), port(dff, 'clk'));
+    wire(doc, port(one, 'out'), port(dff, 'd'));
+    wire(doc, port(dff, 'q'), port(out, 'in'));
+
+    const sim = new Simulator();
+    sim.update(doc);
+    sim.step(0);
+    sim.step(1);
+    expect(sim.valueOfPort(out.id, 'in').value).toBe(0);
+    sim.step(2);
+    expect(sim.valueOfPort(out.id, 'in').value).toBe(1);
+  });
+});
+
+describe('additional sequential components', () => {
+  it('T flip-flop toggles only while T is high', () => {
+    const doc: Doc = { version: 1, name: 'tff', comps: [], wires: [] };
+    const t = createComp('input', { x: 0, y: 0 });
+    const clk = createComp('input', { x: 0, y: 50 });
+    const ff = createComp('tff', { x: 140, y: 0 });
+    const q = createComp('output', { x: 260, y: 0 }, 'west');
+    doc.comps.push(t, clk, ff, q);
+    wire(doc, port(t, 'out'), port(ff, 't'));
+    wire(doc, port(clk, 'out'), port(ff, 'clk'));
+    wire(doc, port(ff, 'q'), port(q, 'in'));
+    const sim = new Simulator();
+    sim.update(doc);
+    sim.setPinValue(t.id, 1);
+    sim.setPinValue(clk.id, 0);
+    sim.frame(0, false);
+    sim.setPinValue(clk.id, 1);
+    sim.frame(1, false);
+    expect(sim.valueOfPort(q.id, 'in').value).toBe(1);
+    sim.setPinValue(clk.id, 0);
+    sim.frame(2, false);
+    sim.setPinValue(t.id, 0);
+    sim.setPinValue(clk.id, 1);
+    sim.frame(3, false);
+    expect(sim.valueOfPort(q.id, 'in').value).toBe(1);
+  });
+
+  it('JK flip-flop sets, resets, toggles and holds', () => {
+    const doc: Doc = { version: 1, name: 'jkff', comps: [], wires: [] };
+    const j = createComp('input', { x: 0, y: 0 });
+    const k = createComp('input', { x: 0, y: 40 });
+    const clk = createComp('input', { x: 0, y: 80 });
+    const ff = createComp('jkff', { x: 160, y: 0 });
+    const q = createComp('output', { x: 280, y: 0 }, 'west');
+    doc.comps.push(j, k, clk, ff, q);
+    wire(doc, port(j, 'out'), port(ff, 'j'));
+    wire(doc, port(k, 'out'), port(ff, 'k'));
+    wire(doc, port(clk, 'out'), port(ff, 'clk'));
+    wire(doc, port(ff, 'q'), port(q, 'in'));
+    const sim = new Simulator();
+    sim.update(doc);
+    sim.setPinValue(clk.id, 0);
+    sim.frame(0, false);
+
+    const edge = (n: number, jv: number, kv: number) => {
+      sim.setPinValue(j.id, jv);
+      sim.setPinValue(k.id, kv);
+      sim.setPinValue(clk.id, 1);
+      sim.frame(n, false);
+      sim.setPinValue(clk.id, 0);
+      sim.frame(n + 0.5, false);
+    };
+
+    edge(1, 1, 0);
+    expect(sim.valueOfPort(q.id, 'in').value).toBe(1);
+    edge(2, 0, 1);
+    expect(sim.valueOfPort(q.id, 'in').value).toBe(0);
+    edge(3, 1, 1);
+    expect(sim.valueOfPort(q.id, 'in').value).toBe(1);
+    edge(4, 0, 0);
+    expect(sim.valueOfPort(q.id, 'in').value).toBe(1);
+  });
+
+  it('S-R latch holds its state between pulses', () => {
+    const doc: Doc = { version: 1, name: 'sr', comps: [], wires: [] };
+    const s = createComp('input', { x: 0, y: 0 });
+    const r = createComp('input', { x: 0, y: 40 });
+    const latch = createComp('sr', { x: 140, y: 0 });
+    const q = createComp('output', { x: 260, y: -8 }, 'west');
+    const qn = createComp('output', { x: 260, y: 16 }, 'west');
+    doc.comps.push(s, r, latch, q, qn);
+    wire(doc, port(s, 'out'), port(latch, 's'));
+    wire(doc, port(r, 'out'), port(latch, 'r'));
+    wire(doc, port(latch, 'q'), port(q, 'in'));
+    wire(doc, port(latch, 'qn'), port(qn, 'in'));
+    const sim = new Simulator();
+    sim.update(doc);
+    sim.setPinValue(s.id, 1);
+    sim.setPinValue(r.id, 0);
+    sim.frame(0, false);
+    expect(sim.valueOfPort(q.id, 'in').value).toBe(1);
+    expect(sim.valueOfPort(qn.id, 'in').value).toBe(0);
+    sim.setPinValue(s.id, 0);
+    sim.frame(1, false);
+    expect(sim.valueOfPort(q.id, 'in').value).toBe(1);
+    sim.setPinValue(r.id, 1);
+    sim.frame(2, false);
+    expect(sim.valueOfPort(q.id, 'in').value).toBe(0);
+    expect(sim.valueOfPort(qn.id, 'in').value).toBe(1);
+    sim.setPinValue(s.id, 1);
+    sim.frame(3, false);
+    expect(sim.valueOfPort(q.id, 'in').value).toBe(0);
+    expect(sim.valueOfPort(qn.id, 'in').value).toBe(0);
+  });
+
+  it('shift register shifts serial data on the rising edge', () => {
+    const doc: Doc = { version: 1, name: 'shift', comps: [], wires: [] };
+    const d = createComp('input', { x: 0, y: 0 });
+    const clk = createComp('input', { x: 0, y: 50 });
+    const reg = createComp('shift', { x: 160, y: 0 }, 'east', 'en', { bits: 4 });
+    const q = createComp('output', { x: 280, y: 0 }, 'west', 'en', { bits: 4 });
+    doc.comps.push(d, clk, reg, q);
+    wire(doc, port(d, 'out'), port(reg, 'd'));
+    wire(doc, port(clk, 'out'), port(reg, 'clk'));
+    wire(doc, port(reg, 'q'), port(q, 'in'));
+    const sim = new Simulator();
+    sim.update(doc);
+    sim.setPinValue(clk.id, 0);
+    sim.frame(0, false);
+
+    const edge = (n: number, bit: number) => {
+      sim.setPinValue(d.id, bit);
+      sim.setPinValue(clk.id, 1);
+      sim.frame(n, false);
+      sim.setPinValue(clk.id, 0);
+      sim.frame(n + 0.5, false);
+    };
+
+    edge(1, 1);
+    expect(sim.valueOfPort(q.id, 'in').value).toBe(1);
+    edge(2, 0);
+    expect(sim.valueOfPort(q.id, 'in').value).toBe(2);
+    edge(3, 1);
+    expect(sim.valueOfPort(q.id, 'in').value).toBe(5);
+  });
+});
+
+describe('width diagnostics', () => {
+  it('reports a net that mixes 8-bit and 1-bit ports', () => {
+    const doc: Doc = { version: 1, name: 'width', comps: [], wires: [] };
+    const input = createComp('input', { x: 0, y: 0 }, 'east', 'en', { bits: 8 });
+    const output = createComp('output', { x: 160, y: 0 }, 'west', 'en', { bits: 1 });
+    doc.comps.push(input, output);
+    wire(doc, port(input, 'out'), port(output, 'in'));
+    const netlist = buildNetlist(doc);
+    expect(netlist.issues).toHaveLength(1);
+    expect(netlist.issues[0].width).toBe(8);
+    expect(new Set(netlist.issues[0].ports.map((p) => p.bits))).toEqual(new Set([8, 1]));
+  });
+
+  it('does not report matching widths', () => {
+    const doc: Doc = { version: 1, name: 'width-ok', comps: [], wires: [] };
+    const input = createComp('input', { x: 0, y: 0 }, 'east', 'en', { bits: 8 });
+    const output = createComp('output', { x: 160, y: 0 }, 'west', 'en', { bits: 8 });
+    doc.comps.push(input, output);
+    wire(doc, port(input, 'out'), port(output, 'in'));
+    expect(buildNetlist(doc).issues).toHaveLength(0);
   });
 });

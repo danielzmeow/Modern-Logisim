@@ -28,6 +28,10 @@ export type CompKind =
   | 'pull'
   | 'extend'
   | 'dff'
+  | 'tff'
+  | 'jkff'
+  | 'sr'
+  | 'shift'
   | 'register'
   | 'counter'
   | 'ram'
@@ -40,6 +44,9 @@ export type CompKind =
   | 'adder'
   | 'subtractor'
   | 'multiplier'
+  | 'divider'
+  | 'negator'
+  | 'bitAdder'
   | 'comparator'
   | 'shifter'
   | 'sevenseg'
@@ -89,6 +96,8 @@ export interface CompAttrs {
   /** Enable / reset / tri-state attributes. */
   enable?: boolean;
   reset?: boolean;
+  /** Split/merge channel widths; omitted means divide evenly. */
+  fanBits?: number[];
   /** Shifter direction. */
   shift?: 'left' | 'right' | 'arithmetic';
   /** Counter direction. */
@@ -268,6 +277,10 @@ export const KIND_NAMES: Record<CompKind, string> = {
   pull: '上拉/下拉电阻',
   extend: '位扩展器',
   dff: 'D 触发器',
+  tff: 'T 触发器',
+  jkff: 'JK 触发器',
+  sr: 'SR 锁存器',
+  shift: '移位寄存器',
   register: '寄存器',
   counter: '计数器',
   ram: 'RAM',
@@ -280,6 +293,9 @@ export const KIND_NAMES: Record<CompKind, string> = {
   adder: '加法器',
   subtractor: '减法器',
   multiplier: '乘法器',
+  divider: '除法器',
+  negator: '取反器',
+  bitAdder: '位加法器',
   comparator: '比较器',
   shifter: '移位器',
   sevenseg: '七段数码管',
@@ -315,6 +331,10 @@ export const KIND_NAMES_EN: Record<CompKind, string> = {
   pull: 'Pull Resistor',
   extend: 'Bit Extender',
   dff: 'D Flip-Flop',
+  tff: 'T Flip-Flop',
+  jkff: 'JK Flip-Flop',
+  sr: 'S-R Latch',
+  shift: 'Shift Register',
   register: 'Register',
   counter: 'Counter',
   ram: 'RAM',
@@ -327,6 +347,9 @@ export const KIND_NAMES_EN: Record<CompKind, string> = {
   adder: 'Adder',
   subtractor: 'Subtractor',
   multiplier: 'Multiplier',
+  divider: 'Divider',
+  negator: 'Negator',
+  bitAdder: 'Bit Adder',
   comparator: 'Comparator',
   shifter: 'Shifter',
   sevenseg: 'Seven-Segment Display',

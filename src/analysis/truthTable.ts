@@ -32,7 +32,14 @@ export interface TruthTable {
 export const MAX_TRUTH_ROWS = 4096;
 
 const isSequential = (c: ComponentInstance) =>
-  c.kind === 'dff' || c.kind === 'register' || c.kind === 'counter' || c.kind === 'ram';
+  c.kind === 'dff' ||
+  c.kind === 'tff' ||
+  c.kind === 'jkff' ||
+  c.kind === 'sr' ||
+  c.kind === 'shift' ||
+  c.kind === 'register' ||
+  c.kind === 'counter' ||
+  c.kind === 'ram';
 
 export function collectInputs(doc: Doc): TruthInput[] {
   return doc.comps

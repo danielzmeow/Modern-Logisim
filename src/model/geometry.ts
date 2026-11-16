@@ -9,6 +9,7 @@ import {
   toWorld,
   worldToLocal,
 } from './types';
+import { laneBits } from './buses';
 
 export interface PortGeom {
   name: string;
@@ -248,6 +249,64 @@ export function geom(comp: ComponentInstance): Geom {
         ],
       };
     }
+    case 'tff': {
+      return {
+        x: -50,
+        y: -20,
+        w: 50,
+        h: 50,
+        ports: [
+          { name: 't', local: { x: -50, y: -8 }, dir: 'in', bits: 1, label: 'T' },
+          { name: 'clk', local: { x: -40, y: 25 }, dir: 'in', bits: 1, label: '›' },
+          { name: 'q', local: { x: 0, y: -8 }, dir: 'out', bits: 1, label: 'Q' },
+          { name: 'qn', local: { x: 0, y: 12 }, dir: 'out', bits: 1, label: 'Q̄' },
+        ],
+      };
+    }
+    case 'jkff': {
+      return {
+        x: -50,
+        y: -25,
+        w: 50,
+        h: 60,
+        ports: [
+          { name: 'j', local: { x: -50, y: -12 }, dir: 'in', bits: 1, label: 'J' },
+          { name: 'k', local: { x: -50, y: 10 }, dir: 'in', bits: 1, label: 'K' },
+          { name: 'clk', local: { x: -35, y: 30 }, dir: 'in', bits: 1, label: '›' },
+          { name: 'q', local: { x: 0, y: -12 }, dir: 'out', bits: 1, label: 'Q' },
+          { name: 'qn', local: { x: 0, y: 10 }, dir: 'out', bits: 1, label: 'Q̄' },
+        ],
+      };
+    }
+    case 'sr': {
+      return {
+        x: -50,
+        y: -20,
+        w: 50,
+        h: 40,
+        ports: [
+          { name: 's', local: { x: -50, y: -8 }, dir: 'in', bits: 1, label: 'S' },
+          { name: 'r', local: { x: -50, y: 12 }, dir: 'in', bits: 1, label: 'R' },
+          { name: 'q', local: { x: 0, y: -8 }, dir: 'out', bits: 1, label: 'Q' },
+          { name: 'qn', local: { x: 0, y: 12 }, dir: 'out', bits: 1, label: 'Q̄' },
+        ],
+      };
+    }
+    case 'shift': {
+      const bits = Math.max(1, Math.min(32, comp.attrs.bits ?? 8));
+      const ports: PortGeom[] = [
+        { name: 'd', local: { x: -50, y: 0 }, dir: 'in', bits: 1, label: 'D' },
+        { name: 'clk', local: { x: -40, y: 30 }, dir: 'in', bits: 1, label: '›' },
+        { name: 'q', local: { x: 0, y: 0 }, dir: 'out', bits, label: 'Q' },
+      ];
+      if (comp.attrs.enable !== false) {
+        ports.push({ name: 'enable', local: { x: -15, y: 30 }, dir: 'in', bits: 1, label: 'EN' });
+      }
+      if (comp.attrs.reset !== false) {
+        ports.push({ name: 'reset', local: { x: 10, y: 30 }, dir: 'in', bits: 1, label: 'R' });
+      }
+      return { x: -50, y: -30, w: 50, h: 60, ports };
+    }
     case 'register': {
       const bits = Math.max(1, Math.min(32, comp.attrs.bits ?? 8));
       const ports: PortGeom[] = [
@@ -457,6 +516,45 @@ export function geom(comp: ComponentInstance): Geom {
         ],
       };
     }
+    case 'negator': {
+      return {
+        x: -30,
+        y: -10,
+        w: 30,
+        h: 20,
+        ports: [
+          { name: 'in', local: { x: -30, y: 0 }, dir: 'in', bits },
+          { name: 'out', local: { x: 0, y: 0 }, dir: 'out', bits },
+        ],
+      };
+    }
+    case 'divider': {
+      return {
+        x: -50,
+        y: -30,
+        w: 50,
+        h: 60,
+        ports: [
+          { name: 'a', local: { x: -50, y: -12 }, dir: 'in', bits, label: 'A' },
+          { name: 'b', local: { x: -50, y: 12 }, dir: 'in', bits, label: 'B' },
+          { name: 'out', local: { x: 0, y: -10 }, dir: 'out', bits, label: 'Q' },
+          { name: 'rem', local: { x: 0, y: 10 }, dir: 'out', bits, label: 'R' },
+        ],
+      };
+    }
+    case 'bitAdder': {
+      const outBits = Math.max(1, Math.ceil(Math.log2(bits + 1)));
+      return {
+        x: -50,
+        y: -25,
+        w: 50,
+        h: 50,
+        ports: [
+          { name: 'in', local: { x: -50, y: 0 }, dir: 'in', bits, label: 'D' },
+          { name: 'out', local: { x: 0, y: 0 }, dir: 'out', bits: outBits, label: 'Σ' },
+        ],
+      };
+    }
     case 'sevenseg': {
       return {
         x: 0,
@@ -471,11 +569,11 @@ export function geom(comp: ComponentInstance): Geom {
       const w = 44;
       const h = Math.max(34, fans * 10 + 14);
       const ports: PortGeom[] = [];
-      const fanBits = Math.max(1, Math.floor(bits / fans));
+      const lanes = laneBits(comp);
       ports.push({ name: 'bus', local: { x: -w / 2, y: 0 }, dir: 'in', bits, label: `${bits}` });
       for (let i = 0; i < fans; i++) {
         const y = -((fans - 1) / 2) * 10 + i * 10;
-        ports.push({ name: `f${i}`, local: { x: w / 2, y }, dir: 'out', bits: fanBits });
+        ports.push({ name: `f${i}`, local: { x: w / 2, y }, dir: 'out', bits: lanes[i] ?? 1 });
       }
       return { x: -w / 2, y: -h / 2, w, h, ports };
     }
@@ -484,10 +582,10 @@ export function geom(comp: ComponentInstance): Geom {
       const w = 44;
       const h = Math.max(34, fans * 10 + 14);
       const ports: PortGeom[] = [];
-      const fanBits = Math.max(1, Math.floor(bits / fans));
+      const lanes = laneBits(comp);
       for (let i = 0; i < fans; i++) {
         const y = -((fans - 1) / 2) * 10 + i * 10;
-        ports.push({ name: `f${i}`, local: { x: -w / 2, y }, dir: 'in', bits: fanBits });
+        ports.push({ name: `f${i}`, local: { x: -w / 2, y }, dir: 'in', bits: lanes[i] ?? 1 });
       }
       ports.push({ name: 'bus', local: { x: w / 2, y: 0 }, dir: 'out', bits, label: `${bits}` });
       return { x: -w / 2, y: -h / 2, w, h, ports };

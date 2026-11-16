@@ -1,6 +1,7 @@
 import type { ComponentInstance, Doc, SimWireState } from './types';
 import { buildNetlist, type Netlist } from './netlist';
 import { flattenCircuit } from './hierarchy';
+import { laneOffsets } from './buses';
 
 const MASK_CACHE: Record<number, number> = {};
 export function maskFor(bits: number): number {
@@ -192,6 +193,41 @@ function evalComponent(
       drive('qn', q ? 0 : 1);
       break;
     }
+    case 'tff':
+    case 'jkff': {
+      const q = ctx.seqQ(comp.id) & 1;
+      drive('q', q);
+      drive('qn', q ? 0 : 1);
+      break;
+    }
+    case 'sr': {
+      if (bad('s') || bad('r')) {
+        drive('q', 0, { error: true });
+        drive('qn', 0, { error: true });
+        break;
+      }
+      const s = read('s') & 1;
+      const r = read('r') & 1;
+      const q = ctx.seqQ(comp.id) & 1;
+      if (s && r) {
+        drive('q', 0);
+        drive('qn', 0);
+      } else if (s) {
+        drive('q', 1);
+        drive('qn', 0);
+      } else if (r) {
+        drive('q', 0);
+        drive('qn', 1);
+      } else {
+        drive('q', q);
+        drive('qn', q ? 0 : 1);
+      }
+      break;
+    }
+    case 'shift': {
+      drive('q', ctx.seqQ(comp.id) & maskFor(bits));
+      break;
+    }
     case 'register': {
       drive('q', ctx.seqQ(comp.id) & maskFor(bits));
       break;
@@ -325,6 +361,46 @@ function evalComponent(
       drive('out', Number(product & BigInt(maskFor(outBits))) >>> 0);
       break;
     }
+    case 'negator': {
+      if (bad('in')) {
+        drive('out', 0, { error: true });
+        break;
+      }
+      drive('out', (~read('in') + 1) & maskFor(bits));
+      break;
+    }
+    case 'divider': {
+      if (bad('a') || bad('b')) {
+        drive('out', 0, { error: true });
+        drive('rem', 0, { error: true });
+        break;
+      }
+      const a = read('a') & maskFor(bits);
+      const b = read('b') & maskFor(bits);
+      if (b === 0) {
+        // Logisim exposes division by zero as an error value, not as 0.
+        drive('out', 0, { error: true });
+        drive('rem', 0, { error: true });
+        break;
+      }
+      drive('out', Math.floor(a / b) & maskFor(bits));
+      drive('rem', (a % b) & maskFor(bits));
+      break;
+    }
+    case 'bitAdder': {
+      if (bad('in')) {
+        drive('out', 0, { error: true });
+        break;
+      }
+      let v = read('in') & maskFor(bits);
+      let ones = 0;
+      while (v) {
+        ones += v & 1;
+        v >>>= 1;
+      }
+      drive('out', ones);
+      break;
+    }
     case 'comparator': {
       if (bad('a') || bad('b')) {
         drive('gt', 0, { error: true });
@@ -368,23 +444,25 @@ function evalComponent(
         break;
       }
       const bus = read('bus');
-      const fanBits = Math.max(1, Math.floor(bits / fans));
+      const lanes = laneOffsets(comp);
       for (let i = 0; i < fans; i++) {
-        drive(`f${i}`, (bus >>> (i * fanBits)) & maskFor(fanBits));
+        const lane = lanes[i] ?? { bits: 1, offset: i };
+        drive(`f${i}`, (bus >>> lane.offset) & maskFor(lane.bits));
       }
       break;
     }
     case 'merge': {
       const fans = Math.max(2, Math.min(12, comp.attrs.fans ?? 2));
-      const fanBits = Math.max(1, Math.floor(bits / fans));
       if (anyBad(Array.from({ length: fans }, (_, i) => `f${i}`))) {
         drive('bus', 0, { error: true });
         break;
       }
+      const lanes = laneOffsets(comp);
       let bus = 0;
       for (let i = 0; i < fans; i++) {
-        const v = read(`f${i}`) & maskFor(fanBits);
-        bus = (bus | (v << (i * fanBits))) >>> 0;
+        const lane = lanes[i] ?? { bits: 1, offset: i };
+        const v = read(`f${i}`) & maskFor(lane.bits);
+        bus = (bus | (v << lane.offset)) >>> 0;
       }
       drive('bus', bus & maskFor(bits));
       break;
@@ -663,6 +741,85 @@ export class Simulator {
           edgeChanged = true;
         }
         st.prevClk = clk;
+      } else if (comp.kind === 'tff') {
+        const st = this.seqComp(comp, 1);
+        if (!this.netKnown(comp.id, 'clk') || !this.netKnown(comp.id, 't')) continue;
+        const clk = this.netValue(comp.id, 'clk') & 1;
+        if (!st.init) {
+          st.prevClk = clk;
+          st.init = true;
+          continue;
+        }
+        const rising = st.prevClk === 0 && clk === 1;
+        const falling = st.prevClk === 1 && clk === 0;
+        const trigger = comp.attrs.trigger === 'falling' ? falling : rising;
+        if (trigger && (this.netValue(comp.id, 't') & 1)) {
+          st.q = st.q ? 0 : 1;
+          edgeChanged = true;
+        }
+        st.prevClk = clk;
+      } else if (comp.kind === 'jkff') {
+        const st = this.seqComp(comp, 1);
+        if (!this.netKnown(comp.id, 'clk') || !this.netKnown(comp.id, 'j') || !this.netKnown(comp.id, 'k')) continue;
+        const clk = this.netValue(comp.id, 'clk') & 1;
+        if (!st.init) {
+          st.prevClk = clk;
+          st.init = true;
+          continue;
+        }
+        const rising = st.prevClk === 0 && clk === 1;
+        const falling = st.prevClk === 1 && clk === 0;
+        const trigger = comp.attrs.trigger === 'falling' ? falling : rising;
+        if (trigger) {
+          const j = this.netValue(comp.id, 'j') & 1;
+          const k = this.netValue(comp.id, 'k') & 1;
+          const next = j && k ? (st.q ? 0 : 1) : j ? 1 : k ? 0 : st.q;
+          if (next !== st.q) {
+            st.q = next;
+            edgeChanged = true;
+          }
+        }
+        st.prevClk = clk;
+      } else if (comp.kind === 'shift') {
+        const bits = bitsOf(comp, 8);
+        const st = this.seqComp(comp, bits);
+        const reset = comp.attrs.reset !== false && this.netKnown(comp.id, 'reset') && (this.netValue(comp.id, 'reset') & 1) === 1;
+        if (reset && st.q !== 0) {
+          st.q = 0;
+          edgeChanged = true;
+        }
+        if (!this.netKnown(comp.id, 'clk')) continue;
+        const clk = this.netValue(comp.id, 'clk') & 1;
+        if (!st.init) {
+          st.prevClk = clk;
+          st.init = true;
+          continue;
+        }
+        const rising = st.prevClk === 0 && clk === 1;
+        const falling = st.prevClk === 1 && clk === 0;
+        const trigger = comp.attrs.trigger === 'falling' ? falling : rising;
+        const enabled =
+          comp.attrs.enable === false ||
+          !this.netKnown(comp.id, 'enable') ||
+          (this.netValue(comp.id, 'enable') & 1) === 1;
+        if (trigger && enabled && !reset && this.netKnown(comp.id, 'd')) {
+          const next = ((st.q << 1) | (this.netValue(comp.id, 'd') & 1)) & maskFor(bits);
+          if (next !== st.q) {
+            st.q = next;
+            edgeChanged = true;
+          }
+        }
+        st.prevClk = clk;
+      } else if (comp.kind === 'sr') {
+        if (!this.netKnown(comp.id, 's') || !this.netKnown(comp.id, 'r')) continue;
+        const st = this.seqComp(comp, 1);
+        const s = this.netValue(comp.id, 's') & 1;
+        const r = this.netValue(comp.id, 'r') & 1;
+        const next = s && r ? 0 : s ? 1 : r ? 0 : st.q;
+        if (next !== st.q) {
+          st.q = next;
+          edgeChanged = true;
+        }
       } else if (comp.kind === 'register') {
         const bits = bitsOf(comp, 8);
         const st = this.seqComp(comp, bits);
@@ -751,6 +908,20 @@ export class Simulator {
     this.dirty = false;
     this.evalCount++;
     return changed || edgeChanged;
+  }
+
+  /** Advance one manual simulation tick: every clock source toggles once. */
+  step(now = Date.now()): boolean {
+    if (!this.netlist) return false;
+    for (const comp of this.flat?.comps ?? []) {
+      if (comp.kind !== 'clock') continue;
+      const st = this.clock(comp.id, now);
+      st.value = st.value ? 0 : 1;
+      const half = 500 / Math.max(0.2, Math.min(40, comp.attrs.freq ?? 2));
+      st.nextAt = now + half;
+    }
+    this.dirty = true;
+    return this.compute();
   }
 
   /** Advance clocks and re-evaluate. Call every animation frame. */

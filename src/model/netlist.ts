@@ -9,11 +9,18 @@ export interface Net {
   wires: number[];
 }
 
+export interface NetIssue {
+  net: number;
+  width: number;
+  ports: { compId: string; port: string; bits: number }[];
+}
+
 export interface Netlist {
   nets: Net[];
   portNet: Map<string, number>;
   wireNet: number[];
   pointNet: Map<string, number>;
+  issues: NetIssue[];
 }
 
 class DSU {
@@ -74,10 +81,47 @@ export function buildNetlist(doc: Doc): Netlist {
     if (w.a !== w.b) dsu.union(w.a, w.b);
   }
 
+  // Bucket wire segments into a coarse grid so a port only tests the few
+  // segments that could contain it. The old implementation was O(points × wires)
+  // and became the dominant cost while dragging large circuits.
+  const CELL = 50;
+  const cellKey = (x: number, y: number) => `${Math.floor(x / CELL)},${Math.floor(y / CELL)}`;
+  const buckets = new Map<string, number[]>();
+  const addToBucket = (x: number, y: number, wireIndex: number) => {
+    const key = cellKey(x, y);
+    const list = buckets.get(key);
+    if (list) {
+      if (list[list.length - 1] !== wireIndex) list.push(wireIndex);
+    } else {
+      buckets.set(key, [wireIndex]);
+    }
+  };
+  for (let wi = 0; wi < wires.length; wi++) {
+    const w = wires[wi];
+    if (w.a.x === w.b.x && w.a.y === w.b.y) continue;
+    if (Math.abs(w.a.x - w.b.x) < 0.01) {
+      const x = w.a.x;
+      const y0 = Math.min(w.a.y, w.b.y);
+      const y1 = Math.max(w.a.y, w.b.y);
+      const c0 = Math.floor(y0 / CELL);
+      const c1 = Math.floor(y1 / CELL);
+      for (let cy = c0; cy <= c1; cy++) addToBucket(x, cy * CELL, wi);
+    } else if (Math.abs(w.a.y - w.b.y) < 0.01) {
+      const y = w.a.y;
+      const x0 = Math.min(w.a.x, w.b.x);
+      const x1 = Math.max(w.a.x, w.b.x);
+      const c0 = Math.floor(x0 / CELL);
+      const c1 = Math.floor(x1 / CELL);
+      for (let cx = c0; cx <= c1; cx++) addToBucket(cx * CELL, y, wi);
+    }
+    // Diagonal segments never participate in pointOnSegment; their endpoints
+    // already joined the DSU above, matching the previous behavior.
+  }
+
   // A node (wire endpoint or component port) touching the interior of a wire joins that net.
   for (let ni = 0; ni < points.length; ni++) {
     const p = points[ni];
-    for (let wi = 0; wi < wires.length; wi++) {
+    for (const wi of buckets.get(cellKey(p.x, p.y)) ?? []) {
       const w = wires[wi];
       if (samePoint(p, w.a) || samePoint(p, w.b)) continue;
       if (pointOnSegment(p, w.a, w.b, 0.6)) {
@@ -137,6 +181,18 @@ export function buildNetlist(doc: Doc): Netlist {
   const pointNet = new Map<string, number>();
   for (const [key, node] of nodes) pointNet.set(key, netForRoot(dsu.find(node)));
 
-  return { nets, portNet, wireNet, pointNet };
+  const issues: NetIssue[] = [];
+  for (const net of nets) {
+    const widths = new Set(net.ports.filter((p) => p.bits > 0).map((p) => p.bits));
+    if (widths.size > 1) {
+      issues.push({
+        net: net.id,
+        width: net.width,
+        ports: net.ports.filter((p) => p.bits > 0).map((p) => ({ ...p })),
+      });
+    }
+  }
+
+  return { nets, portNet, wireNet, pointNet, issues };
 }
 

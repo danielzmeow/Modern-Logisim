@@ -287,6 +287,33 @@ export const SPECS: Spec[] = [
     keywords: ['multiply', 'product', '乘法', '乘'],
   },
   {
+    kind: 'divider',
+    name: '除法器',
+    nameEn: 'Divider',
+    category: 'arithmetic',
+    desc: '计算无符号 A ÷ B，输出商和余数',
+    descEn: 'Computes unsigned A ÷ B with quotient and remainder',
+    keywords: ['divide', 'divider', 'quotient', 'remainder', '除法', '商', '余数'],
+  },
+  {
+    kind: 'negator',
+    name: '取反器',
+    nameEn: 'Negator',
+    category: 'arithmetic',
+    desc: '计算二进制补码的相反数',
+    descEn: 'Computes the two’s-complement negation',
+    keywords: ['negate', 'negator', 'two complement', '取反', '相反数', '补码'],
+  },
+  {
+    kind: 'bitAdder',
+    name: '位加法器',
+    nameEn: 'Bit Adder',
+    category: 'arithmetic',
+    desc: '统计输入中 1 的个数',
+    descEn: 'Counts the number of high input bits',
+    keywords: ['bit adder', 'popcount', 'ones', '位加法', '计数', '置位'],
+  },
+  {
     kind: 'comparator',
     name: '比较器',
     nameEn: 'Comparator',
@@ -312,6 +339,42 @@ export const SPECS: Spec[] = [
     desc: '在时钟边沿锁存输入',
     descEn: 'Latches D on a clock edge',
     keywords: ['dff', 'flip flop', 'register', '触发器', 'd', '锁存'],
+  },
+  {
+    kind: 'tff',
+    name: 'T 触发器',
+    nameEn: 'T Flip-Flop',
+    category: 'memory',
+    desc: 'T 为一时每个时钟沿翻转',
+    descEn: 'Toggles on each clock edge while T is high',
+    keywords: ['tff', 'toggle', 'flip flop', '触发器', '翻转'],
+  },
+  {
+    kind: 'jkff',
+    name: 'JK 触发器',
+    nameEn: 'JK Flip-Flop',
+    category: 'memory',
+    desc: '支持置位、复位和翻转的边沿触发器',
+    descEn: 'Edge-triggered flip-flop with set, reset and toggle',
+    keywords: ['jk', 'flip flop', '触发器', '置位', '复位'],
+  },
+  {
+    kind: 'sr',
+    name: 'SR 锁存器',
+    nameEn: 'S-R Latch',
+    category: 'memory',
+    desc: '由置位/复位输入保持状态的锁存器',
+    descEn: 'A level-sensitive set/reset latch',
+    keywords: ['sr', 'latch', 'set reset', '锁存', '置位', '复位'],
+  },
+  {
+    kind: 'shift',
+    name: '移位寄存器',
+    nameEn: 'Shift Register',
+    category: 'memory',
+    desc: '在每个时钟沿把数据移入寄存器',
+    descEn: 'Shifts one bit into a multi-bit register on each clock edge',
+    keywords: ['shift', 'register', 'serial', '移位', '寄存器', '串行'],
   },
   {
     kind: 'register',
@@ -459,6 +522,14 @@ export function defaultAttrs(kind: CompKind, lang: Lang = 'en'): CompAttrs {
       return { label: '', color: 'emerald' };
     case 'dff':
       return { label: '', trigger: 'rising' };
+    case 'tff':
+      return { label: '', trigger: 'rising' };
+    case 'jkff':
+      return { label: '', trigger: 'rising' };
+    case 'sr':
+      return { label: '' };
+    case 'shift':
+      return { label: '', bits: 8, trigger: 'rising', enable: true, reset: true };
     case 'register':
       return { label: '', bits: 8, trigger: 'rising', enable: true, reset: true };
     case 'counter':
@@ -483,6 +554,11 @@ export function defaultAttrs(kind: CompKind, lang: Lang = 'en'): CompAttrs {
       return { label: '', bits: 8 };
     case 'multiplier':
       return { label: '', bits: 4 };
+    case 'divider':
+    case 'negator':
+      return { label: '', bits: 8 };
+    case 'bitAdder':
+      return { label: '', bits: 8 };
     case 'shifter':
       return { label: '', bits: 8, shift: 'left' };
     case 'split':
