@@ -130,6 +130,7 @@ function cleanAttrs(kind: ComponentInstance['kind'], value: unknown): CompAttrs 
   if ('shift' in src) {
     attrs.shift = src.shift === 'right' || src.shift === 'arithmetic' ? src.shift : 'left';
   }
+  if ('segMode' in src) attrs.segMode = src.segMode === 'bus' ? 'bus' : 'separate';
   if ('find' in src) {
     attrs.find =
       src.find === 'high1' || src.find === 'low0' || src.find === 'high0' || src.find === 'low1'
@@ -175,7 +176,15 @@ function cleanDoc(value: unknown, fallbackName: string, lang: Lang): {
       changed = true;
       continue;
     }
-    const kind = raw.kind as ComponentInstance['kind'];
+    let kind = raw.kind as ComponentInstance['kind'];
+    const rawAttrs = isRec(raw.attrs) ? raw.attrs : {};
+    const attrs = cleanAttrs(kind, raw.attrs);
+    // Legacy docs used `sevenseg` as a 4-bit decoded display. New sevenseg
+    // components always carry segMode; migrate old payloads to Hex Digit.
+    if (kind === 'sevenseg' && !('segMode' in rawAttrs)) {
+      kind = 'hexdigit';
+      attrs.bits = 4;
+    }
     let id = str(raw.id, '', MAX_LABEL);
     if (!id || compIds.has(id)) {
       id = `c${comps.length}_${Math.random().toString(36).slice(2, 6)}`;
@@ -190,7 +199,7 @@ function cleanDoc(value: unknown, fallbackName: string, lang: Lang): {
       kind,
       at,
       facing,
-      attrs: cleanAttrs(kind, raw.attrs),
+      attrs,
     });
   }
   if (value.comps.length > MAX_COMPS) changed = true;

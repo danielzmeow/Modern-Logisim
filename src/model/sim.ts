@@ -99,6 +99,7 @@ function evalComponent(
     }
     case 'probe':
     case 'sevenseg':
+    case 'hexdigit':
     case 'led':
     case 'output':
     case 'tunnel':

@@ -119,3 +119,22 @@ describe('.circ memory components', () => {
     expect(xml).toContain('<a name="trigger" val="falling"/>');
   });
 });
+
+describe('.circ displays', () => {
+  it('writes separate/bus seven-segment and hex digit components', () => {
+    const separate = createComp('sevenseg', { x: 100, y: 100 }, 'east', 'en', {
+      segMode: 'separate',
+    });
+    const bus = createComp('sevenseg', { x: 200, y: 100 }, 'east', 'en', {
+      segMode: 'bus',
+      bits: 7,
+    });
+    const hex = createComp('hexdigit', { x: 300, y: 100 }, 'east', 'en', { bits: 4 });
+    const doc: Doc = { version: 1, name: 'Displays', comps: [separate, bus, hex], wires: [] };
+    const xml = exportCirc(doc).xml;
+    expect(xml).toContain('name="Seven-Segment Display"');
+    expect(xml).toContain('<a name="input" val="separate"/>');
+    expect(xml).toContain('<a name="input" val="bus"/>');
+    expect(xml).toContain('name="Hex Digit Display"');
+  });
+});

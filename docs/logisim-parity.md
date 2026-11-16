@@ -55,8 +55,8 @@
 
 ### 2.6 输入/输出
 
-- 已实现：Button、LED、七段数码管、Clock、输入/输出 Pin、Probe。
-- 未实现：RGB LED、Hex Digit Display、Joystick、Keyboard、TTY/Terminal、Buzzer。
+- 已实现：Button、LED、七段数码管（独立 a–g / 7 位总线）、Hex Digit Display、Clock、输入/输出 Pin、Probe。
+- 未实现：RGB LED、Joystick、Keyboard、TTY/Terminal、Buzzer、Dot Matrix。
 
 ### 2.7 子电路
 

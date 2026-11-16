@@ -145,3 +145,15 @@ describe('autosave storage', () => {
     expect(takeStorageNotice()).toContain('Autosave is paused');
   });
 });
+
+describe('legacy display migration', () => {
+  it('migrates the old decoded seven-segment component to Hex Digit', () => {
+    const comp = createComp('sevenseg', { x: 0, y: 0 }, 'east', 'en', { color: 'rose' });
+    delete comp.attrs.segMode;
+    const doc: Doc = { version: 1, name: 'Legacy', comps: [comp], wires: [] };
+    const result = sanitizeProject({ current: 'main', circuits: { main: doc }, order: ['main'] }, 'en')!;
+    const migrated = result.project.circuits.main.comps[0];
+    expect(migrated.kind).toBe('hexdigit');
+    expect(migrated.attrs.bits).toBe(4);
+  });
+});

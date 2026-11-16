@@ -480,9 +480,18 @@ export const SPECS: Spec[] = [
     name: '七段数码管',
     nameEn: 'Seven-Segment Display',
     category: 'io',
-    desc: '把 4 位十六进制值显示为数码管字形',
-    descEn: 'Displays a 4-bit hexadecimal digit',
+    desc: '由 a–g 七路段输入直接控制显示',
+    descEn: 'Driven directly by the a–g segment inputs',
     keywords: ['seven', 'segment', 'display', '数码管', '七段'],
+  },
+  {
+    kind: 'hexdigit',
+    name: '十六进制数码管',
+    nameEn: 'Hex Digit Display',
+    category: 'io',
+    desc: '把 4 位值译码为十六进制字形',
+    descEn: 'Decodes a 4-bit value into a hexadecimal digit',
+    keywords: ['hex', 'digit', 'display', '十六进制', '数码管'],
   },
   {
     kind: 'sub',
@@ -591,6 +600,8 @@ export function defaultAttrs(kind: CompKind, lang: Lang = 'en'): CompAttrs {
     case 'extend':
       return { label: '', inBits: 4, outBits: 8, sign: false };
     case 'sevenseg':
+      return { label: '', color: 'rose', segMode: 'separate' };
+    case 'hexdigit':
       return { label: '', color: 'rose' };
     case 'probe':
     case 'power':

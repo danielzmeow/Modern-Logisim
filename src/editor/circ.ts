@@ -380,6 +380,12 @@ export function importCirc(
         comp.attrs.label = label ?? '';
       } else if (name === 'Seven-Segment Display') {
         comp = createComp('sevenseg', loc, facing);
+        comp.attrs.segMode = attr(el, 'input') === 'bus' ? 'bus' : 'separate';
+        comp.attrs.bits = comp.attrs.segMode === 'bus' ? 7 : undefined;
+        comp.attrs.label = label ?? '';
+      } else if (name === 'Hex Digit Display') {
+        comp = createComp('hexdigit', loc, facing);
+        comp.attrs.bits = 4;
         comp.attrs.label = label ?? '';
       } else if (name === 'Buffer Gate' || name === 'Odd Parity' || name === 'Even Parity') {
         const kind = name === 'Buffer Gate' ? 'buffer' : name === 'Odd Parity' ? 'odd' : 'even';
@@ -515,7 +521,7 @@ const LIB: Record<CompKind, string> = {
   mux: '2', decoder: '2', demux: '2', priority: '2', bitSelect: '2',
   adder: '3', subtractor: '3', multiplier: '3', divider: '3', negator: '3', bitAdder: '3', bitFinder: '3', comparator: '3', shifter: '3',
   dff: '4', tff: '4', jkff: '4', sr: '4', shift: '4', random: '4', register: '4', counter: '4', ram: '4', rom: '4',
-  led: '5', button: '5', sevenseg: '5',
+  led: '5', button: '5', sevenseg: '5', hexdigit: '5',
   text: '6', sub: '-',
 };
 
@@ -708,6 +714,14 @@ function compToXml(c: ComponentInstance, circuits: Record<string, Doc>): { xml: 
       break;
     case 'sevenseg':
       name = 'Seven-Segment Display';
+      attrs.push(
+        ['facing', facingAttr],
+        ['input', c.attrs.segMode === 'bus' ? 'bus' : 'separate'],
+        ['label', label],
+      );
+      break;
+    case 'hexdigit':
+      name = 'Hex Digit Display';
       attrs.push(['facing', facingAttr], ['label', label]);
       break;
     case 'buffer':

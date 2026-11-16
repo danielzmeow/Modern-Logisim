@@ -52,6 +52,7 @@ export type CompKind =
   | 'comparator'
   | 'shifter'
   | 'sevenseg'
+  | 'hexdigit'
   | 'tunnel'
   | 'sub'
   | 'text';
@@ -108,6 +109,8 @@ export interface CompAttrs {
   find?: 'low1' | 'high1' | 'low0' | 'high0';
   /** Counter direction. */
   count?: 'up' | 'down';
+  /** Seven-segment input mode. */
+  segMode?: 'separate' | 'bus';
   /** Random generator seed. */
   seed?: number;
   /** RAM / ROM geometry. */
@@ -309,6 +312,7 @@ export const KIND_NAMES: Record<CompKind, string> = {
   comparator: '比较器',
   shifter: '移位器',
   sevenseg: '七段数码管',
+  hexdigit: '十六进制数码管',
   tunnel: '隧道标签',
   sub: '子电路',
   text: '文字注释',
@@ -365,6 +369,7 @@ export const KIND_NAMES_EN: Record<CompKind, string> = {
   comparator: 'Comparator',
   shifter: 'Shifter',
   sevenseg: 'Seven-Segment Display',
+  hexdigit: 'Hex Digit Display',
   tunnel: 'Tunnel',
   sub: 'Subcircuit',
   text: 'Text',

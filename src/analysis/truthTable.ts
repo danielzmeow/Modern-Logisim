@@ -87,8 +87,8 @@ export function collectOutputs(doc: Doc): TruthOutput[] {
       });
     } else if (comp.kind === 'led') {
       out.push({ comp, label: comp.attrs.label || 'LED', bits: 1, port: 'in' });
-    } else if (comp.kind === 'sevenseg') {
-      out.push({ comp, label: comp.attrs.label || '7-seg', bits: 4, port: 'in' });
+    } else if (comp.kind === 'hexdigit') {
+      out.push({ comp, label: comp.attrs.label || 'Hex', bits: 4, port: 'in' });
     }
   }
   return out;

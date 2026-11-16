@@ -584,6 +584,31 @@ export function geom(comp: ComponentInstance): Geom {
       };
     }
     case 'sevenseg': {
+      if (comp.attrs.segMode === 'bus') {
+        return {
+          x: 0,
+          y: -30,
+          w: 38,
+          h: 60,
+          ports: [{ name: 'in', local: { x: 0, y: 0 }, dir: 'in', bits: 7 }],
+        };
+      }
+      const names = ['a', 'b', 'c', 'd', 'e', 'f', 'g'];
+      return {
+        x: 0,
+        y: -30,
+        w: 38,
+        h: 60,
+        ports: names.map((name, i) => ({
+          name,
+          local: { x: 0, y: -24 + i * 8 },
+          dir: 'in' as const,
+          bits: 1,
+          label: name,
+        })),
+      };
+    }
+    case 'hexdigit': {
       return {
         x: 0,
         y: -30,

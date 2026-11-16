@@ -297,6 +297,7 @@ export function CompIcon({ kind, size = 24 }: { kind: CompKind; size?: number })
         </svg>
       );
     case 'sevenseg':
+    case 'hexdigit':
       return (
         <svg {...common}>
           <rect x="4" y="2.5" width="16" height="19" rx="2" />

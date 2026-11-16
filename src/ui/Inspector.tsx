@@ -678,7 +678,7 @@ function CompEditor({ comp }: { comp: ComponentInstance }) {
         </Section>
       )}
 
-      {comp.kind === 'led' && (
+      {(comp.kind === 'led' || comp.kind === 'sevenseg' || comp.kind === 'hexdigit') && (
         <Section title={t('inspector.appearance')}>
           <Row label={t('inspector.color')}>
             <div className="flex items-center gap-2">
@@ -711,7 +711,7 @@ function CompEditor({ comp }: { comp: ComponentInstance }) {
         </Section>
       )}
 
-      {(comp.kind === 'output' || comp.kind === 'led' || comp.kind === 'probe' || comp.kind === 'sevenseg') && (
+      {(comp.kind === 'output' || comp.kind === 'led' || comp.kind === 'probe' || comp.kind === 'hexdigit') && (
         <Section title={t('analysis.title')}>
           <button
             className="btn btn-soft w-full"
@@ -825,6 +825,24 @@ function CompEditor({ comp }: { comp: ComponentInstance }) {
                 { value: 'high0' as const, label: t('inspector.findHighZero') },
               ]}
               onChange={(v) => update(comp.id, { find: v })}
+            />
+          </Row>
+        </Section>
+      )}
+
+      {comp.kind === 'sevenseg' && (
+        <Section title={t('inspector.signal')}>
+          <Row label={t('inspector.segmentInput')}>
+            <Segmented
+              accent
+              value={comp.attrs.segMode ?? 'separate'}
+              options={[
+                { value: 'separate' as const, label: t('inspector.separateSegments') },
+                { value: 'bus' as const, label: t('inspector.busSegments') },
+              ]}
+              onChange={(v) =>
+                update(comp.id, { segMode: v, bits: v === 'bus' ? 7 : undefined })
+              }
             />
           </Row>
         </Section>

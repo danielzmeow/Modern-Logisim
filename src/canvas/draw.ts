@@ -790,41 +790,67 @@ function drawComponentInner(
       if (comp.kind === 'shifter') chipText(ctx, comp, -30, 12, comp.attrs.shift === 'left' ? '≪' : comp.attrs.shift === 'arithmetic' ? '⩾' : '≫', pal.faint, 6, 'left');
       break;
     }
-    case 'sevenseg': {
-      const sv = ghost ? { value: 0, state: 'known' as const } : sim.valueOfPort(comp.id, 'in');
-      const value = sv.value & 0xf;
+    case 'sevenseg':
+    case 'hexdigit': {
+      const segNames = ['a', 'b', 'c', 'd', 'e', 'f', 'g'];
       const color = LED_COLORS[comp.attrs.color ?? 'rose'] ?? LED_COLORS.rose;
-      ctx.beginPath();
-      ctx.moveTo(0, 0);
-      ctx.lineTo(4, 0);
-      ctx.strokeStyle = pal.muted;
-      ctx.lineWidth = 1.5;
-      ctx.stroke();
+      const active = new Set<string>();
+      if (comp.kind === 'hexdigit') {
+        const sv = ghost ? { value: 0 } : sim.valueOfPort(comp.id, 'in');
+        const segs: Record<string, string[]> = {
+          '0': ['a', 'b', 'c', 'd', 'e', 'f'],
+          '1': ['b', 'c'],
+          '2': ['a', 'b', 'g', 'e', 'd'],
+          '3': ['a', 'b', 'g', 'c', 'd'],
+          '4': ['f', 'g', 'b', 'c'],
+          '5': ['a', 'f', 'g', 'c', 'd'],
+          '6': ['a', 'f', 'g', 'e', 'c', 'd'],
+          '7': ['a', 'b', 'c'],
+          '8': ['a', 'b', 'c', 'd', 'e', 'f', 'g'],
+          '9': ['a', 'b', 'c', 'd', 'f', 'g'],
+          a: ['a', 'b', 'c', 'e', 'f', 'g'],
+          b: ['c', 'd', 'e', 'f', 'g'],
+          c: ['a', 'd', 'e', 'f'],
+          d: ['b', 'c', 'd', 'e', 'g'],
+          e: ['a', 'd', 'e', 'f', 'g'],
+          f: ['a', 'e', 'f', 'g'],
+        };
+        for (const name of segs[(sv.value & 0xf).toString(16)] ?? []) active.add(name);
+      } else if (comp.attrs.segMode === 'bus') {
+        const sv = ghost ? { value: 0 } : sim.valueOfPort(comp.id, 'in');
+        segNames.forEach((name, i) => {
+          if ((sv.value >>> i) & 1) active.add(name);
+        });
+      } else {
+        for (const name of segNames) {
+          const sv = ghost ? { value: 0, state: 'known' as const } : sim.valueOfPort(comp.id, name);
+          if (sv.state === 'known' && sv.value) active.add(name);
+        }
+      }
+      const isSeparate = comp.kind === 'sevenseg' && comp.attrs.segMode !== 'bus';
+      if (isSeparate) {
+        segNames.forEach((_, i) => {
+          ctx.beginPath();
+          ctx.moveTo(0, -24 + i * 8);
+          ctx.lineTo(4, -24 + i * 8);
+          ctx.strokeStyle = pal.muted;
+          ctx.lineWidth = 1.2;
+          ctx.stroke();
+        });
+      } else {
+        ctx.beginPath();
+        ctx.moveTo(0, 0);
+        ctx.lineTo(4, 0);
+        ctx.strokeStyle = pal.muted;
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+      }
       roundedRect(ctx, 4, -30, 34, 60, 6);
       ctx.fillStyle = pal.ledOff;
       ctx.fill();
       ctx.strokeStyle = pal.chipStroke;
       ctx.lineWidth = 1.3;
       ctx.stroke();
-      const segs: Record<string, string[]> = {
-        '0': ['a', 'b', 'c', 'd', 'e', 'f'],
-        '1': ['b', 'c'],
-        '2': ['a', 'b', 'g', 'e', 'd'],
-        '3': ['a', 'b', 'g', 'c', 'd'],
-        '4': ['f', 'g', 'b', 'c'],
-        '5': ['a', 'f', 'g', 'c', 'd'],
-        '6': ['a', 'f', 'g', 'e', 'c', 'd'],
-        '7': ['a', 'b', 'c'],
-        '8': ['a', 'b', 'c', 'd', 'e', 'f', 'g'],
-        '9': ['a', 'b', 'c', 'd', 'f', 'g'],
-        a: ['a', 'b', 'c', 'e', 'f', 'g'],
-        b: ['c', 'd', 'e', 'f', 'g'],
-        c: ['a', 'd', 'e', 'f'],
-        d: ['b', 'c', 'd', 'e', 'g'],
-        e: ['a', 'd', 'e', 'f', 'g'],
-        f: ['a', 'e', 'f', 'g'],
-      };
-      const active = new Set(segs[value.toString(16)] ?? []);
       const paths: Record<string, [number, number, number, number]> = {
         a: [8, -24, 28, -24],
         b: [31, -21, 31, -3],
@@ -1197,7 +1223,7 @@ export function drawScene(opts: SceneOptions) {
       const alwaysPins = [
         'sub', 'ram', 'rom', 'decoder', 'demux', 'priority', 'bitSelect',
         'register', 'counter', 'adder', 'subtractor', 'multiplier', 'divider', 'negator',
-        'bitAdder', 'bitFinder', 'comparator', 'shifter', 'sevenseg', 'ctrlBuffer', 'ctrlInverter',
+        'bitAdder', 'bitFinder', 'comparator', 'shifter', 'sevenseg', 'hexdigit', 'ctrlBuffer', 'ctrlInverter',
         'tff', 'jkff', 'sr', 'shift', 'random',
       ].includes(comp.kind);
       const showPorts =
