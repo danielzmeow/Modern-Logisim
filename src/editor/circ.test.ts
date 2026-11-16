@@ -33,10 +33,17 @@ describe('.circ export', () => {
     expect(xml).toContain('name="Shift Register"');
   });
 
-  it('reports skipped merge instead of silently dropping it', () => {
-    const doc = docWith('merge');
-    const { skipped } = exportCirc(doc);
-    expect(skipped).toEqual(['merge']);
+  it('exports a merge as a Splitter with a direction hint', () => {
+    const merge = createComp('merge', { x: 100, y: 100 }, 'east', 'en', {
+      bits: 4,
+      fans: 2,
+      bitEnd: [1, 1, 2, 2],
+    });
+    const doc: Doc = { version: 1, name: 'Merge', comps: [merge], wires: [] };
+    const { xml, skipped } = exportCirc(doc);
+    expect(skipped).toEqual([]);
+    expect(xml).toContain('name="Splitter"');
+    expect(xml).toContain('<a name="direction" val="merge"/>');
   });
 
   it('exports a Splitter with its per-bit mapping', () => {

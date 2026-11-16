@@ -256,7 +256,7 @@ export function importCirc(
         comp = createComp('tunnel', loc, facing);
         comp.attrs.label = label ?? 'net';
       } else if (name === 'Splitter') {
-        comp = createComp('split', loc, facing);
+        comp = createComp(attr(el, 'direction') === 'merge' ? 'merge' : 'split', loc, facing);
         comp.attrs.bits = Math.max(1, Math.min(32, num(attr(el, 'incoming'), 8)));
         comp.attrs.fans = Math.max(2, Math.min(12, num(attr(el, 'fanout'), 2)));
         comp.attrs.label = label ?? '';
@@ -737,17 +737,17 @@ function compToXml(c: ComponentInstance, circuits: Record<string, Doc>): { xml: 
       if (c.kind !== 'not' && (c.attrs.size ?? 50) !== 50) attrs.push(['size', c.attrs.size ?? 50]);
       attrs.push(['facing', facingAttr], ['label', label]);
       break;
-    case 'split': {
+    case 'split':
+    case 'merge': {
       name = 'Splitter';
       lib = '0';
       const mapping = effectiveBitEnd(c);
       attrs.push(['facing', facingAttr], ['fanout', c.attrs.fans ?? 2], ['incoming', c.attrs.bits ?? 8]);
       mapping.forEach((end, bit) => attrs.push([`bit${bit}`, end === 0 ? 'none' : String(end - 1)]));
+      if (c.kind === 'merge') attrs.push(['direction', 'merge']);
       attrs.push(['label', label]);
       break;
     }
-    case 'merge':
-      return null;
   }
   return {
     lib,

@@ -99,9 +99,9 @@ npm run typecheck
 
 **可以导入**：多电路与子电路、输入/输出引脚、Probe、LED、Button、时钟、常量、Tunnel、电源/接地/上拉电阻、位扩展器、常见门、D/T/JK 触发器、SR 锁存器、寄存器、移位寄存器、计数器、随机数发生器、RAM/ROM（参数与 ROM 内容）、多路选择器、译码器/解复用器/优先编码器/位选择器、加法/减法/乘法/除法/取反/位加法/位查找/比较/移位器、Splitter（按分线方向）、七段数码管、文字。
 
-**可以导出**：同上（导出成 Logisim 2.7.1 格式，包含全部电路与子电路），并会统一平移到正坐标。ROM 存储内容会按 Logisim 的 `addr/data` 格式写入 `.circ`；Splitter 会写入 `fanout`、`incoming` 和 `bit0..bitN` 逐位映射；RAM 运行时内容仍只保存在项目 JSON 中。合线器仍暂不写入 `.circ`。
+**可以导出**：同上（导出成 Logisim 2.7.1 格式，包含全部电路与子电路），并会统一平移到正坐标。ROM 存储内容会按 Logisim 的 `addr/data` 格式写入 `.circ`；Splitter 会写入 `fanout`、`incoming` 和 `bit0..bitN` 逐位映射；合线器还会附带 `direction="merge"` 提示；RAM 运行时内容仍只保存在项目 JSON 中。
 
-**暂不支持**：合线器作为 Splitter 导出、TTL/SoC 库、Logisim Evolution 的新元件。导入的 Splitter 按分线方向处理。
+**暂不支持**：TTL/SoC 库、Logisim Evolution 的新元件。导入的 Splitter 默认按分线方向处理；本编辑器导出的合线器会带 `direction="merge"` 提示。
 
 导入时会自动修补端口附近的连线端点；如果文件里有被跳过的元件，会通过 Toast 提示。导入导出提示均跟随当前界面语言。
 
@@ -109,7 +109,7 @@ npm run typecheck
 
 ## 已知边界
 
-- 子电路可用，但没有独立的符号外观编辑器；分线器支持逐位任意映射，合线器尚未导出为 Splitter
+- 子电路可用，但没有独立的符号外观编辑器；分线器和合线器都支持逐位任意映射
 - RAM/ROM 的 `.circ` 内容导入导出、TTL/SoC 库尚未实现
 - 信号状态仍按整条网络记录，尚未精确到每一位的 `E/Z`；不同位宽连接会在画布和检查器中标记冲突
 - 仿真模型针对组合逻辑和简单时序电路，不保证复杂反馈电路的波形时序
