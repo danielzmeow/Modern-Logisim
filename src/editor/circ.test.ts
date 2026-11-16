@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { exportCirc } from './circ';
+import { exportCirc, formatRomContents, parseRomContents } from './circ';
 import { createComp } from '../model/specs';
 import type { Doc } from '../model/types';
 
@@ -37,5 +37,33 @@ describe('.circ export', () => {
     const doc = docWith('split', 'merge');
     const { skipped } = exportCirc(doc);
     expect(new Set(skipped)).toEqual(new Set(['split', 'merge']));
+  });
+
+  it('round-trips a Logisim ROM contents image', () => {
+    const contents = formatRomContents([0xaa, 0xbb, 0xbb, 0], 2, 8);
+    expect(contents).toContain('addr/data: 2 8');
+    expect(contents).toContain('aa 2*bb');
+    const parsed = parseRomContents(contents, 2, 8)!;
+    expect(parsed.addrBits).toBe(2);
+    expect(parsed.dataBits).toBe(8);
+    expect(parsed.memory.slice(0, 4)).toEqual([0xaa, 0xbb, 0xbb, 0]);
+  });
+
+  it('writes ROM contents as element text and leaves RAM volatile', () => {
+    const rom = createComp('rom', { x: 100, y: 100 }, 'east', 'en', {
+      addrBits: 2,
+      dataBits: 8,
+      memory: [1, 2, 3, 4],
+    });
+    const ram = createComp('ram', { x: 300, y: 100 }, 'east', 'en', {
+      addrBits: 2,
+      dataBits: 8,
+      memory: [9, 9, 9, 9],
+    });
+    const doc: Doc = { version: 1, name: 'Memory', comps: [rom, ram], wires: [] };
+    const xml = exportCirc(doc).xml;
+    expect(xml).toContain('<a name="contents">addr/data: 2 8');
+    expect(xml).not.toContain('val="addr/data');
+    expect(xml.match(/<a name="contents">/g)).toHaveLength(1);
   });
 });

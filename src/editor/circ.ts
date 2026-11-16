@@ -30,10 +30,84 @@ function parseFacing(v: string | null | undefined): Facing {
 function attr(el: Element, name: string): string | null {
   for (const child of Array.from(el.children)) {
     if (child.tagName === 'a' && child.getAttribute('name') === name) {
-      return child.getAttribute('val');
+      const val = child.getAttribute('val');
+      if (val !== null) return val;
+      const text = child.textContent;
+      return text === null ? null : text.replace(/^\s+|\s+$/g, '');
     }
   }
   return null;
+}
+
+export interface LogisimMemoryImage {
+  addrBits: number;
+  dataBits: number;
+  memory: number[];
+}
+
+/** Parse Logisim's ROM `contents` attribute (v2.0 raw hex words). */
+export function parseRomContents(
+  text: string,
+  fallbackAddrBits = 4,
+  fallbackDataBits = 8,
+): LogisimMemoryImage | null {
+  const trimmed = text.trim();
+  if (!trimmed) return null;
+  const lines = trimmed.split(/\r?\n/);
+  let addrBits = fallbackAddrBits;
+  let dataBits = fallbackDataBits;
+  let bodyStart = 0;
+  const header = lines[0]?.match(/^addr\/data:\s*(\d+)\s+(\d+)/i);
+  if (header) {
+    addrBits = Math.max(1, Math.min(20, Number(header[1])));
+    dataBits = Math.max(1, Math.min(32, Number(header[2])));
+    bodyStart = 1;
+  }
+  const body = lines
+    .slice(bodyStart)
+    .map((line) => line.replace(/#.*$/, '').trim())
+    .filter(Boolean)
+    .join(' ');
+  if (!body) return { addrBits, dataBits, memory: [] };
+  const size = Math.min(1 << addrBits, 1 << 20);
+  const memory = new Array<number>(size).fill(0);
+  let cursor = 0;
+  const mask = (2 ** Math.min(32, dataBits) - 1) >>> 0;
+  for (const token of body.split(/\s+/)) {
+    const match = token.match(/^(\d+)\*([0-9a-fx]+)$/i);
+    const count = match ? Math.max(1, Number(match[1])) : 1;
+    const raw = (match ? match[2] : token).replace(/^0x/i, '');
+    const value = parseInt(raw, 16);
+    if (!Number.isFinite(value)) continue;
+    for (let i = 0; i < count && cursor < size; i++) {
+      memory[cursor++] = value & mask;
+    }
+    if (cursor >= size) break;
+  }
+  return { addrBits, dataBits, memory };
+}
+
+/** Write Logisim's ROM contents value (v2.0 raw, run-length encoded). */
+export function formatRomContents(memory: number[], addrBits: number, dataBits: number): string {
+  const size = Math.min(1 << Math.max(1, Math.min(20, addrBits)), 1 << 20);
+  const values = Array.from({ length: size }, (_, i) => (memory[i] ?? 0) >>> 0);
+  let end = values.length - 1;
+  while (end >= 0 && values[end] === 0) end--;
+  if (end < 0) return '';
+  const tokens: string[] = [];
+  let i = 0;
+  while (i <= end) {
+    const value = values[i];
+    let j = i + 1;
+    while (j <= end && values[j] === value) j++;
+    const count = j - i;
+    const hex = value.toString(16);
+    tokens.push(count > 1 ? `${count}*${hex}` : hex);
+    i = j;
+  }
+  const lines: string[] = [];
+  for (let i = 0; i < tokens.length; i += 8) lines.push(tokens.slice(i, i + 8).join(' '));
+  return `addr/data: ${addrBits} ${dataBits}\n${lines.join('\n')}\n`;
 }
 
 export interface CircImportResult {
@@ -221,6 +295,17 @@ export function importCirc(
         comp.attrs.dataBits = Math.max(1, Math.min(32, num(attr(el, 'dataBits'), 8)));
         comp.attrs.label = label ?? '';
         comp.attrs.memory = [];
+        if (name === 'ROM') {
+          const contents = attr(el, 'contents');
+          const parsed = contents
+            ? parseRomContents(contents, comp.attrs.addrBits, comp.attrs.dataBits)
+            : null;
+          if (parsed) {
+            comp.attrs.addrBits = parsed.addrBits;
+            comp.attrs.dataBits = parsed.dataBits;
+            comp.attrs.memory = parsed.memory;
+          }
+        }
       } else if (name === 'Multiplexer') {
         const sel = Math.max(1, Math.min(4, num(attr(el, 'select'), 1)));
         comp = createComp('mux', loc, facing);
@@ -375,7 +460,16 @@ function esc(s: string): string {
 function attrsXml(pairs: [string, string | number | boolean | null | undefined][]): string {
   const filtered = pairs.filter(([, v]) => v !== null && v !== undefined && v !== '');
   if (!filtered.length) return '';
-  return '\n' + filtered.map(([k, v]) => `      <a name="${esc(k)}" val="${esc(String(v))}"/>`).join('\n');
+  return '\n' + filtered
+    .map(([k, v]) => {
+      const value = String(v);
+      // XML normalizes literal newlines in attribute values, so multi-line
+      // attributes (notably ROM contents) must be written as element text.
+      return value.includes('\n')
+        ? `      <a name="${esc(k)}">${esc(value)}</a>`
+        : `      <a name="${esc(k)}" val="${esc(value)}"/>`;
+    })
+    .join('\n');
 }
 
 export interface CircExportResult {
@@ -518,6 +612,12 @@ function compToXml(c: ComponentInstance, circuits: Record<string, Doc>): { xml: 
       name = c.kind === 'ram' ? 'RAM' : 'ROM';
       attrs.push(['facing', facingAttr], ['addrBits', c.attrs.addrBits ?? 4], ['dataBits', c.attrs.dataBits ?? 8]);
       attrs.push(['label', label]);
+      if (c.kind === 'rom' && c.attrs.memory?.some((value) => value !== 0)) {
+        attrs.push([
+          'contents',
+          formatRomContents(c.attrs.memory, c.attrs.addrBits ?? 4, c.attrs.dataBits ?? 8),
+        ]);
+      }
       break;
     case 'mux':
       name = 'Multiplexer';
