@@ -4,7 +4,9 @@ import { useT } from './useT';
 import { useFocusTrap } from './useFocusTrap';
 import { buildTruthTable, formatCell, truthTableCsv } from '../analysis/truthTable';
 import { minimizeTruthTable } from '../analysis/minimize';
-import { ClipboardCopy, FunctionSquare, Hash, X } from 'lucide-react';
+import { synthesizeEquations } from '../analysis/equations';
+import { viewControls } from '../canvas/view';
+import { ClipboardCopy, FunctionSquare, Hash, Wand2, X } from 'lucide-react';
 
 export function TruthTable() {
   const open = useEditor((s) => s.truthOpen);
@@ -66,6 +68,35 @@ export function TruthTable() {
   };
 
   const empty = !table || !table.outputs.length || (!table.inputs.length && !table.outputs.length);
+
+  const generateCircuit = () => {
+    if (!minimized?.expressions.length) return;
+    try {
+      const source = minimized.expressions
+        .map((entry) => `${entry.name} = ${entry.expression}`)
+        .join('\n');
+      const result = synthesizeEquations(source, lang);
+      const st = useEditor.getState();
+      const base = minimized.expressions.length === 1
+        ? minimized.expressions[0].name
+        : t('analysis.generatedName');
+      let name = base;
+      let n = 2;
+      const names = new Set(Object.values(st.circuits).map((d) => d.name));
+      while (names.has(name)) name = `${base} ${n++}`;
+      result.doc.name = name;
+      const id = st.createCircuit(name, result.doc);
+      st.switchCircuit(id);
+      setOpen(false);
+      setTimeout(() => {
+        st.toastMsg(t('analysis.generated', { name }), 'success');
+        viewControls.fit();
+      }, 30);
+    } catch (err) {
+      console.error(err);
+      useEditor.getState().toastMsg(t('analysis.generateFailed'), 'error');
+    }
+  };
 
   return (
     <div
@@ -212,6 +243,14 @@ export function TruthTable() {
             <div className="mb-1.5 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.1em] text-[var(--text-muted)]">
               <FunctionSquare size={12} />
               {t('analysis.expressions')}
+              {!!minimized?.expressions.length && (
+                <button
+                  className="btn btn-soft ml-auto !h-6 !text-[10.5px] normal-case tracking-normal"
+                  onClick={generateCircuit}
+                >
+                  <Wand2 size={11} /> {t('analysis.generateCircuit')}
+                </button>
+              )}
             </div>
             {table?.sequential ? (
               <div className="text-[11.5px] text-[var(--warning-text)]">
@@ -225,7 +264,7 @@ export function TruthTable() {
               <div className="grid gap-1.5">
                 {minimized.expressions.map((entry) => (
                   <div
-                    key={entry.label}
+                    key={entry.name}
                     className="flex items-start gap-2 rounded-md border border-[var(--line)] bg-[var(--card)] px-2 py-1.5"
                   >
                     <span className="shrink-0 font-mono text-[11.5px] font-semibold text-[var(--text-strong)]">

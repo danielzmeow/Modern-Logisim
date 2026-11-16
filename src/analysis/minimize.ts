@@ -1,7 +1,9 @@
 import type { TruthTable } from './truthTable';
 
 export interface MinimizedExpression {
-  /** Display name such as Y or BUS0. */
+  /** Valid identifier used when generating a circuit. */
+  name: string;
+  /** Display name from the original output label. */
   label: string;
   /** Comma-separated input names used by the expression. */
   variables: string[];
@@ -23,6 +25,17 @@ interface Implicant {
 }
 
 const keyOf = (bits: string, mask: string) => `${bits}/${mask}`;
+
+function safeIdentifier(base: string, fallback: string, used: Set<string>): string {
+  const cleaned = base.replace(/[^A-Za-z0-9_]/g, '_');
+  let name = /[A-Za-z0-9]/.test(cleaned) ? cleaned : fallback;
+  if (!/^[A-Za-z_]/.test(name)) name = `_${name}`;
+  let candidate = name;
+  let suffix = 2;
+  while (used.has(candidate)) candidate = `${name}_${suffix++}`;
+  used.add(candidate);
+  return candidate;
+}
 
 function combine(a: Implicant, b: Implicant): Implicant | null {
   if (a.mask !== b.mask) return null;
@@ -137,11 +150,7 @@ export function minimizeTruthTable(table: TruthTable, maxVariables = 10): Minimi
     const input = table.inputs[inputIndex];
     for (let bit = 0; bit < input.bits; bit++) {
       const base = input.bits === 1 ? input.label : `${input.label}${bit}`;
-      let name = base;
-      let suffix = 2;
-      while (used.has(name)) name = `${base}_${suffix++}`;
-      used.add(name);
-      names.push(name);
+      names.push(safeIdentifier(base, `I${inputIndex}_${bit}`, used));
     }
   }
   const variables = names.length;
@@ -167,12 +176,13 @@ export function minimizeTruthTable(table: TruthTable, maxVariables = 10): Minimi
         if ((value >>> bit) & 1) minterms.push(rowIndex);
       }
       const label = output.bits === 1 ? output.label : `${output.label}${bit}`;
+      const name = safeIdentifier(label, `O${outputIndex}_${bit}`, used);
       if (sawUnknown) {
         skipped.push(label);
         continue;
       }
       if (variables > 0 && minterms.length === 2 ** variables) {
-        expressions.push({ label, variables: names, expression: '1' });
+        expressions.push({ name, label, variables: names, expression: '1' });
         continue;
       }
       const primes = primeImplicants(minterms, variables);
@@ -180,7 +190,7 @@ export function minimizeTruthTable(table: TruthTable, maxVariables = 10): Minimi
       const expression = selected.length
         ? selected.map((imp) => termText(imp, names)).join(' | ')
         : '0';
-      expressions.push({ label, variables: names, expression });
+      expressions.push({ name, label, variables: names, expression });
     }
   }
   return { expressions, skipped, tooManyVariables: false };

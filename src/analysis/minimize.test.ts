@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { minimizeTruthTable } from './minimize';
+import { synthesizeEquations } from './equations';
 import { buildTruthTable, type TruthTable } from './truthTable';
 import { halfAdder } from '../editor/templates';
 import { createComp } from '../model/specs';
@@ -69,6 +70,19 @@ describe('boolean minimization', () => {
     const result = minimizeTruthTable(buildTruthTable(halfAdder()));
     expect(result.expressions.map((entry) => entry.label)).toEqual(['S', 'C']);
     expect(result.expressions.every((entry) => entry.expression !== '0')).toBe(true);
+  });
+
+  it('produces names that the equation parser can consume', () => {
+    const table = tableFor([0, 0, 0, 1]);
+    table.inputs[0].label = '输入 A';
+    table.outputs[0].label = '结果 Y';
+    const result = minimizeTruthTable(table);
+    const entry = result.expressions[0];
+    expect(entry.name).toMatch(/^[A-Za-z_]\w*$/);
+    for (const variable of entry.variables) expect(variable).toMatch(/^[A-Za-z_]\w*$/);
+    const generated = synthesizeEquations(`${entry.name} = ${entry.expression}`, 'en');
+    expect(generated.outputs).toEqual([entry.name]);
+    expect(generated.doc.comps.length).toBeGreaterThan(0);
   });
 });
 
