@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<project source="2.7.1" version="1.0">
+  <lib desc="#Wiring" name="0"/>
+  <lib desc="#Gates" name="1"/>
+  <main name="main"/>
+  <circuit name="main">
+    <comp lib="0" loc="(100,100)" name="Constant">
+      <a name="width" val="4"/>
+      <a name="value" val="0x3"/>
+    </comp>
+    <comp lib="0" loc="(100,200)" name="Constant">
+      <a name="width" val="4"/>
+      <a name="value" val="0x6"/>
+    </comp>
+    <comp lib="0" loc="(240,150)" name="Probe">
+      <a name="width" val="4"/>
+      <a name="label" val="BUS"/>
+    </comp>
+    <comp lib="0" loc="(200,307)" name="Constant">
+      <a name="width" val="1"/>
+      <a name="value" val="0x0"/>
+    </comp>
+    <comp lib="1" loc="(280,295)" name="Controlled Buffer">
+      <a name="width" val="2"/>
+    </comp>
+    <comp lib="0" loc="(280,305)" name="Constant">
+      <a name="width" val="2"/>
+      <a name="value" val="0x3"/>
+    </comp>
+    <comp lib="0" loc="(400,300)" name="Splitter">
+      <a name="fanout" val="2"/>
+      <a name="incoming" val="4"/>
+      <a name="bit0" val="0"/>
+      <a name="bit1" val="0"/>
+      <a name="bit2" val="1"/>
+      <a name="bit3" val="1"/>
+      <a name="direction" val="merge"/>
+    </comp>
+    <comp lib="0" loc="(500,300)" name="Probe">
+      <a name="width" val="4"/>
+      <a name="label" val="MERGE"/>
+    </comp>
+    <wire from="(100,100)" to="(160,100)"/>
+    <wire from="(100,200)" to="(160,200)"/>
+    <wire from="(160,100)" to="(160,200)"/>
+    <wire from="(160,150)" to="(240,150)"/>
+    <wire from="(200,307)" to="(240,307)"/>
+    <wire from="(280,295)" to="(378,295)"/>
+    <wire from="(280,305)" to="(378,305)"/>
+    <wire from="(422,300)" to="(500,300)"/>
+  </circuit>
+</project>

@@ -2,6 +2,7 @@ import { drawScene } from '../canvas/draw';
 import { computePngLayout } from '../canvas/exportLayout';
 import { contentBounds } from '../model/geometry';
 import { sim } from '../model/sim';
+import { createSimView } from '../model/simView';
 import { useEditor } from './store';
 import { safeFilename } from './circ';
 import { tr } from '../i18n';
@@ -34,11 +35,20 @@ function renderCircuitCanvas(): HTMLCanvasElement | null {
     st.toastMsg(tr(st.lang, 'file.pngFailed'), 'error');
     return null;
   }
-  sim.ensure(st.doc, st.circuits);
+  // PNG/print export always simulates from the fixed root, and maps values
+  // onto whichever circuit is currently being viewed.
+  const rootDoc = st.simRootId ? st.circuits[st.simRootId] : undefined;
+  sim.ensure(rootDoc ?? st.doc, st.circuits, st.simRootId ?? undefined);
+  const view = createSimView(sim, {
+    circuits: st.circuits,
+    rootId: st.simRootId,
+    circuitId: st.currentCircuit,
+    path: st.simPath,
+  });
   drawScene({
     ctx,
     doc: st.doc,
-    sim,
+    view,
     selComps: [],
     selWires: [],
     hover: null,

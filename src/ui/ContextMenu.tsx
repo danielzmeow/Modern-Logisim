@@ -26,6 +26,8 @@ import {
   Redo2,
   Zap,
   Command,
+  Eye,
+  ArrowUp,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 
@@ -70,6 +72,10 @@ export function ContextMenu() {
   const future = useEditor((s) => s.future.length);
   const paletteOpen = useEditor((s) => s.paletteOpen);
   const shortcutsOpen = useEditor((s) => s.shortcutsOpen);
+  const canWriteRuntime = useEditor(
+    (s) => s.simRootId !== null && s.simPath !== null && s.simPath.length === 0,
+  );
+  const inInstanceView = useEditor((s) => s.simPath !== null && s.simPath.length > 0);
   const { lang, t } = useT();
 
   useEffect(() => {
@@ -138,9 +144,21 @@ export function ContextMenu() {
                 icon={Zap}
                 label={t('menu.toggleLevel')}
                 shortcut="↵"
+                disabled={!canWriteRuntime}
                 onClick={() => {
                   if (first) sim.togglePin(first);
                   setMenu(null);
+                  viewControls.invalidate();
+                }}
+              />
+            )}
+            {comps.length === 1 && first?.kind === 'sub' && !!first.attrs.circuit && (
+              <Item
+                icon={Eye}
+                label={t('menu.viewInstance')}
+                onClick={() => {
+                  st().enterInstance(first.id);
+                  close();
                   viewControls.invalidate();
                 }}
               />
@@ -287,6 +305,17 @@ export function ContextMenu() {
         )}
         {menu.target === 'canvas' && (
           <>
+            {inInstanceView && (
+              <Item
+                icon={ArrowUp}
+                label={t('menu.exitInstance')}
+                onClick={() => {
+                  st().exitInstance();
+                  close();
+                  viewControls.invalidate();
+                }}
+              />
+            )}
             <Item
               icon={Undo2}
               label={t('menu.undo')}

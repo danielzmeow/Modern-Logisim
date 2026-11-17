@@ -1,33 +1,88 @@
 import type { ComponentInstance, Doc, SimWireState } from './types';
 import { buildNetlist, type Netlist } from './netlist';
 import { flattenCircuit } from './hierarchy';
-import { effectiveBitEnd, laneBits } from './buses';
+import { effectiveBitEnd } from './buses';
+import {
+  errorValue,
+  floatingValue,
+  knownValue,
+  maskFor,
+  resolveBitDrivers,
+  stateOfBits,
+  type BitDriver,
+  type BitValue,
+} from './value';
 
-const MASK_CACHE: Record<number, number> = {};
-export function maskFor(bits: number): number {
-  const b = Math.max(1, Math.min(32, Math.round(bits)));
-  if (MASK_CACHE[b] === undefined) {
-    MASK_CACHE[b] =
-      b >= 32 ? 0xffffffff : b === 1 ? 1 : ((1 << b) >>> 0) - 1;
-    MASK_CACHE[b] >>>= 0;
-  }
-  return MASK_CACHE[b];
-}
+export { maskFor };
 
-const KNOWN = 0;
-const FLOATING = 1;
-const ERROR = 2;
-type NetState = 0 | 1 | 2;
-
-interface Driver {
+/**
+ * One component output contributing to a net. Unlike the pure `BitDriver`
+ * used by `resolveBitDrivers`, error/known are masks so a single port drive
+ * can carry per-bit Z/E.
+ */
+interface MaskDriver {
   value: number;
-  error: boolean;
+  known: number;
+  error: number;
   weak: boolean;
 }
 
 type Read = (port: string) => number;
 type ReadState = (port: string) => SimWireState;
 type Drive = (port: string, value: number, opts?: { enabled?: boolean; weak?: boolean; error?: boolean }) => void;
+type ReadBits = (port: string) => BitValue;
+type DriveBits = (port: string, value: BitValue, opts?: { enabled?: boolean; weak?: boolean }) => void;
+
+interface PortIO {
+  read: Read;
+  state: ReadState;
+  drive: Drive;
+  readBits: ReadBits;
+  driveBits: DriveBits;
+}
+
+/** Canonicalize a BitValue to a width: disjoint masks, data only on known bits. */
+function maskBits(bits: BitValue, width: number): BitValue {
+  const mask = maskFor(width);
+  const error = (bits.error & mask) >>> 0;
+  const known = (bits.known & mask & ~error) >>> 0;
+  return { value: (bits.value & known) >>> 0, known, error };
+}
+
+/**
+ * Per-bit four-value gate math in the Logisim order: a known absorbing value
+ * (0 for AND, 1 for OR) wins over everything; then E propagates; then Z;
+ * otherwise the bit is resolved from the inputs.
+ */
+function bitAnd(a: BitValue, b: BitValue, width: number): BitValue {
+  const mask = maskFor(width);
+  const zero = ((a.known & ~a.value) | (b.known & ~b.value)) & mask;
+  const error = ((a.error | b.error) & ~zero & mask) >>> 0;
+  const known = ((zero | (a.known & b.known)) & mask) >>> 0;
+  return { value: (a.value & b.value & known) >>> 0, known, error };
+}
+
+function bitOr(a: BitValue, b: BitValue, width: number): BitValue {
+  const mask = maskFor(width);
+  const one = ((a.known & a.value) | (b.known & b.value)) & mask;
+  const error = ((a.error | b.error) & ~one & mask) >>> 0;
+  const known = ((one | (a.known & b.known)) & mask) >>> 0;
+  return { value: ((a.value | b.value) & known) >>> 0, known, error };
+}
+
+function bitXor(a: BitValue, b: BitValue, width: number): BitValue {
+  const mask = maskFor(width);
+  const error = ((a.error | b.error) & mask) >>> 0;
+  const known = ((a.known & b.known) & mask) >>> 0;
+  return { value: ((a.value ^ b.value) & known) >>> 0, known, error };
+}
+
+function bitNot(a: BitValue, width: number): BitValue {
+  const mask = maskFor(width);
+  const known = (a.known & mask) >>> 0;
+  const error = (a.error & mask) >>> 0;
+  return { value: (~a.value & known) >>> 0, known, error };
+}
 
 interface EvalContext {
   pinValues: Map<string, number>;
@@ -56,11 +111,10 @@ function memorySize(comp: ComponentInstance): number {
 
 function evalComponent(
   comp: ComponentInstance,
-  read: Read,
-  state: ReadState,
-  drive: Drive,
+  ports: PortIO,
   ctx: EvalContext,
 ) {
+  const { read, state, drive, readBits, driveBits } = ports;
   const bits = bitsOf(comp);
   const anyBad = (names: string[]) => names.some((name) => state(name) !== 'known');
   const bad = (port: string) => state(port) !== 'known';
@@ -107,13 +161,11 @@ function evalComponent(
     case 'text':
       break;
     case 'not': {
-      if (bad('in')) drive('out', 0, { error: true });
-      else drive('out', (~read('in') & maskFor(bits)) >>> 0);
+      driveBits('out', bitNot(readBits('in'), bits));
       break;
     }
     case 'buffer': {
-      if (bad('in')) drive('out', 0, { error: true });
-      else drive('out', read('in') & maskFor(bits));
+      driveBits('out', maskBits(readBits('in'), bits));
       break;
     }
     case 'and':
@@ -123,23 +175,17 @@ function evalComponent(
     case 'xor':
     case 'xnor': {
       const n = Math.max(2, Math.min(5, comp.attrs.inputs ?? 2));
-      if (anyBad(Array.from({ length: n }, (_, i) => `in${i}`))) {
-        drive('out', 0, { error: true });
-        break;
-      }
-      const mask = maskFor(bits);
-      const first = read('in0') & mask;
-      let acc = first;
+      let acc = readBits('in0');
       for (let i = 1; i < n; i++) {
-        const v = read(`in${i}`) & mask;
-        if (comp.kind === 'and' || comp.kind === 'nand') acc &= v;
-        else if (comp.kind === 'or' || comp.kind === 'nor') acc |= v;
-        else acc ^= v;
+        const v = readBits(`in${i}`);
+        if (comp.kind === 'and' || comp.kind === 'nand') acc = bitAnd(acc, v, bits);
+        else if (comp.kind === 'or' || comp.kind === 'nor') acc = bitOr(acc, v, bits);
+        else acc = bitXor(acc, v, bits);
       }
       if (comp.kind === 'nand' || comp.kind === 'nor' || comp.kind === 'xnor') {
-        acc = (~acc & mask) >>> 0;
+        acc = bitNot(acc, bits);
       }
-      drive('out', acc & mask);
+      driveBits('out', acc);
       break;
     }
     case 'odd':
@@ -162,17 +208,18 @@ function evalComponent(
     }
     case 'ctrlBuffer':
     case 'ctrlInverter': {
-      if (bad('enable')) {
-        drive('out', 0, { error: true });
+      const en = readBits('enable');
+      if (en.error & 1) {
+        driveBits('out', errorValue(bits));
         break;
       }
-      if (!(read('enable') & 1)) break; // high impedance: no driver at all
-      if (bad('in')) drive('out', 0, { error: true });
-      else if (comp.kind === 'ctrlInverter') {
-        drive('out', (~read('in') & maskFor(bits)) >>> 0);
-      } else {
-        drive('out', read('in') & maskFor(bits));
+      if (!(en.known & 1)) {
+        driveBits('out', floatingValue(bits));
+        break;
       }
+      if (!(en.value & 1)) break; // high impedance: no driver at all
+      const d = maskBits(readBits('in'), bits);
+      driveBits('out', comp.kind === 'ctrlInverter' ? bitNot(d, bits) : d);
       break;
     }
     case 'extend': {
@@ -261,17 +308,21 @@ function evalComponent(
     case 'mux': {
       const selBits = Math.max(1, Math.min(4, comp.attrs.fans ?? 1));
       const n = 1 << selBits;
-      if (bad('sel')) {
-        drive('out', 0, { error: true });
+      const sel = maskBits(readBits('sel'), selBits);
+      if (sel.error) {
+        driveBits('out', errorValue(bits));
         break;
       }
-      const sel = read('sel');
-      if (sel >= n) {
-        drive('out', 0, { error: true });
+      if (sel.known !== maskFor(selBits)) {
+        driveBits('out', floatingValue(bits));
         break;
       }
-      if (bad(`d${sel}`)) drive('out', 0, { error: true });
-      else drive('out', read(`d${sel}`) & maskFor(bits));
+      const s = sel.value;
+      if (s >= n) {
+        driveBits('out', errorValue(bits));
+        break;
+      }
+      driveBits('out', maskBits(readBits(`d${s}`), bits));
       break;
     }
     case 'decoder': {
@@ -296,13 +347,19 @@ function evalComponent(
     case 'demux': {
       const selBits = Math.max(1, Math.min(4, comp.attrs.fans ?? 1));
       const n = 1 << selBits;
-      if (bad('sel') || bad('in')) {
-        for (let i = 0; i < n; i++) drive(`out${i}`, 0, { error: true });
+      const sel = maskBits(readBits('sel'), selBits);
+      if (sel.error) {
+        for (let i = 0; i < n; i++) driveBits(`out${i}`, errorValue(bits));
         break;
       }
-      const sel = read('sel');
+      if (sel.known !== maskFor(selBits)) {
+        for (let i = 0; i < n; i++) driveBits(`out${i}`, floatingValue(bits));
+        break;
+      }
+      const s = sel.value;
+      const d = maskBits(readBits('in'), bits);
       for (let i = 0; i < n; i++) {
-        drive(`out${i}`, i === sel ? read('in') & maskFor(bits) : 0);
+        driveBits(`out${i}`, i === s ? d : knownValue(0, bits));
       }
       break;
     }
@@ -327,12 +384,26 @@ function evalComponent(
     }
     case 'bitSelect': {
       const selBits = Math.max(1, Math.min(5, comp.attrs.fans ?? 2));
-      if (bad('sel') || bad('in')) {
-        drive('out', 0, { error: true });
+      const sel = maskBits(readBits('sel'), selBits);
+      if (sel.error) {
+        driveBits('out', errorValue(1));
         break;
       }
-      const sel = read('sel') % (1 << selBits);
-      drive('out', (read('in') >>> sel) & 1);
+      if (sel.known !== maskFor(selBits)) {
+        driveBits('out', floatingValue(1));
+        break;
+      }
+      const s = sel.value % (1 << selBits);
+      if (s >= bits) {
+        driveBits('out', knownValue(0, 1));
+        break;
+      }
+      const d = readBits('in');
+      driveBits('out', {
+        value: (d.value >>> s) & 1,
+        known: (d.known >>> s) & 1,
+        error: (d.error >>> s) & 1,
+      });
       break;
     }
     case 'adder':
@@ -466,44 +537,45 @@ function evalComponent(
     }
     case 'split': {
       const fans = Math.max(2, Math.min(12, comp.attrs.fans ?? 2));
-      if (bad('bus')) {
-        for (let i = 0; i < fans; i++) drive(`f${i}`, 0, { error: true });
-        break;
-      }
-      const bus = read('bus');
+      const bus = readBits('bus');
       const ends = effectiveBitEnd(comp);
-      const widths = laneBits(comp);
       const values = new Array<number>(fans).fill(0);
+      const knowns = new Array<number>(fans).fill(0);
+      const errors = new Array<number>(fans).fill(0);
       const positions = new Array<number>(fans).fill(0);
       for (let bit = 0; bit < ends.length; bit++) {
         const lane = ends[bit];
         if (!lane) continue;
         const index = lane - 1;
         const position = positions[index]++;
-        values[index] |= ((bus >>> bit) & 1) << position;
+        values[index] |= ((bus.value >>> bit) & 1) << position;
+        knowns[index] |= ((bus.known >>> bit) & 1) << position;
+        errors[index] |= ((bus.error >>> bit) & 1) << position;
       }
-      for (let i = 0; i < fans; i++) drive(`f${i}`, values[i] & maskFor(widths[i]));
+      for (let i = 0; i < fans; i++) {
+        driveBits(`f${i}`, { value: values[i], known: knowns[i], error: errors[i] });
+      }
       break;
     }
     case 'merge': {
       const fans = Math.max(2, Math.min(12, comp.attrs.fans ?? 2));
-      if (anyBad(Array.from({ length: fans }, (_, i) => `f${i}`))) {
-        drive('bus', 0, { error: true });
-        break;
-      }
       const ends = effectiveBitEnd(comp);
-      const widths = laneBits(comp);
-      const values = Array.from({ length: fans }, (_, i) => read(`f${i}`) & maskFor(widths[i]));
+      const lanes = Array.from({ length: fans }, (_, i) => readBits(`f${i}`));
       const positions = new Array<number>(fans).fill(0);
-      let bus = 0;
+      let value = 0;
+      let known = 0;
+      let error = 0;
       for (let bit = 0; bit < ends.length; bit++) {
         const lane = ends[bit];
         if (!lane) continue;
         const index = lane - 1;
-        const value = (values[index] >>> positions[index]++) & 1;
-        bus = (bus | (value << bit)) >>> 0;
+        const d = lanes[index];
+        const position = positions[index]++;
+        value |= ((d.value >>> position) & 1) << bit;
+        known |= ((d.known >>> position) & 1) << bit;
+        error |= ((d.error >>> position) & 1) << bit;
       }
-      drive('bus', bus & maskFor(bits));
+      driveBits('bus', { value: value >>> 0, known: known >>> 0, error: error >>> 0 });
       break;
     }
   }
@@ -514,6 +586,10 @@ export interface SimValue {
   width: number;
   high: boolean;
   state: SimWireState;
+  /** Bit mask of the resolved known bits (1 = known); Z and E bits stay 0. */
+  known: number;
+  /** Bit mask of the error bits (1 = E). */
+  error: number;
 }
 
 interface SeqState {
@@ -529,10 +605,12 @@ export class Simulator {
   private flat: Doc | null = null;
   private netlist: Netlist | null = null;
   private values = new Uint32Array(0);
-  private states = new Uint8Array(0);
+  private known = new Uint32Array(0);
+  private error = new Uint32Array(0);
   private scratch = new Uint32Array(0);
-  private scratchStates = new Uint8Array(0);
-  private drivers: Driver[][] = [];
+  private scratchKnown = new Uint32Array(0);
+  private scratchError = new Uint32Array(0);
+  private drivers: MaskDriver[][] = [];
   private lastChangedNets = new Set<number>();
   private pinValues = new Map<string, number>();
   private heldButtons = new Set<string>();
@@ -541,25 +619,32 @@ export class Simulator {
   private memories = new Map<string, { sig: string; data: Uint32Array }>();
   private running = false;
   private dirty = true;
+  private oscillationState: { nets: Set<number> } | null = null;
   private evalCount = 0;
   private errors: string[] = [];
+  private rootId: string | undefined;
   tick = 0;
 
-  update(doc: Doc, circuits?: Record<string, Doc>) {
-    if (doc === this.doc && circuits === this.circuits && this.netlist) return;
+  update(doc: Doc, circuits?: Record<string, Doc>, rootId?: string) {
+    if (doc === this.doc && circuits === this.circuits && rootId === this.rootId && this.netlist) return;
     this.doc = doc;
     this.circuits = circuits;
-    const flat = circuits ? flattenCircuit(doc, circuits) : { doc, errors: [] };
+    this.rootId = rootId;
+    const flat = circuits ? flattenCircuit(doc, circuits, rootId) : { doc, errors: [] };
     this.flat = flat.doc;
     this.errors = flat.errors;
     this.netlist = buildNetlist(flat.doc);
     this.values = new Uint32Array(this.netlist.nets.length);
-    this.states = new Uint8Array(this.netlist.nets.length);
+    this.known = new Uint32Array(this.netlist.nets.length);
+    this.error = new Uint32Array(this.netlist.nets.length);
     this.scratch = new Uint32Array(this.netlist.nets.length);
-    this.scratchStates = new Uint8Array(this.netlist.nets.length);
+    this.scratchKnown = new Uint32Array(this.netlist.nets.length);
+    this.scratchError = new Uint32Array(this.netlist.nets.length);
     this.drivers = Array.from({ length: this.netlist.nets.length }, () => []);
     this.dirty = true;
     this.evalCount = 0;
+    // Net indices are rebuilt below, so any recorded oscillation is stale.
+    this.oscillationState = null;
     const present = new Set(flat.doc.comps.map((c) => c.id));
     for (const id of this.pinValues.keys()) if (!present.has(id)) this.pinValues.delete(id);
     for (const id of this.heldButtons) if (!present.has(id)) this.heldButtons.delete(id);
@@ -620,96 +705,128 @@ export class Simulator {
     const nl = this.netlist;
     if (!nl) return false;
     const prev = this.values;
-    const prevStates = this.states;
+    const prevKnown = this.known;
+    const prevError = this.error;
     const next = useScratch ? this.scratch : this.values;
-    const nextStates = useScratch ? this.scratchStates : this.states;
+    const nextKnown = useScratch ? this.scratchKnown : this.known;
+    const nextError = useScratch ? this.scratchError : this.error;
     next.fill(0);
-    nextStates.fill(FLOATING);
+    nextKnown.fill(0);
+    nextError.fill(0);
     for (const list of this.drivers) list.length = 0;
     const portNet = (compId: string, port: string) => nl.portNet.get(`${compId}:${port}`) ?? -1;
 
-    const readOf = (compId: string): Read => (port: string) => {
+    const readBitsOf = (compId: string): ReadBits => (port: string) => {
       const n = portNet(compId, port);
-      return n < 0 || prevStates[n] !== KNOWN ? 0 : prev[n] >>> 0;
+      if (n < 0) return { value: 0, known: 0, error: 0 };
+      return { value: prev[n] >>> 0, known: prevKnown[n] >>> 0, error: prevError[n] >>> 0 };
     };
-    const stateOf = (compId: string): ReadState => (port: string) => {
-      const n = portNet(compId, port);
-      if (n < 0) return 'z';
-      return prevStates[n] === KNOWN ? 'known' : prevStates[n] === ERROR ? 'e' : 'z';
-    };
-    const driveOf = (compId: string): Drive => (port, value, opts = {}) => {
-      if (opts.enabled === false) return;
+    const readOf = (compId: string): Read =>
+      (port: string) => {
+        const n = portNet(compId, port);
+        if (n < 0) return 0;
+        const mask = maskFor(nl.nets[n].width);
+        return (prevKnown[n] & mask) >>> 0 === mask ? prev[n] >>> 0 : 0;
+      };
+    const stateOf = (compId: string): ReadState =>
+      (port: string) => {
+        const n = portNet(compId, port);
+        if (n < 0) return 'z';
+        return stateOfBits(
+          { value: prev[n] >>> 0, known: prevKnown[n] >>> 0, error: prevError[n] >>> 0 },
+          nl.nets[n].width,
+        );
+      };
+    const pushDriver = (compId: string, port: string, bits: BitValue, weak: boolean, enabled?: boolean) => {
+      if (enabled === false) return;
       const n = portNet(compId, port);
       if (n < 0) return;
-      const width = nl.nets[n].width;
+      const mask = maskFor(nl.nets[n].width);
+      const error = (bits.error & mask) >>> 0;
+      const known = (bits.known & mask & ~error) >>> 0;
       this.drivers[n].push({
-        value: opts.error ? 0 : (value & maskFor(width)) >>> 0,
-        error: !!opts.error,
-        weak: !!opts.weak,
+        value: (bits.value & known) >>> 0,
+        known,
+        error,
+        weak,
       });
+    };
+    const driveBitsOf = (compId: string): DriveBits => (port, bits, opts = {}) =>
+      pushDriver(compId, port, bits, !!opts.weak, opts.enabled);
+    // Legacy whole-port drive: a uniform error collapses to an all-E mask, so
+    // un-migrated components keep their previous whole-port behavior.
+    const driveOf = (compId: string): Drive => (port, value, opts = {}) => {
+      const n = portNet(compId, port);
+      const width = n < 0 ? 1 : nl.nets[n].width;
+      pushDriver(
+        compId,
+        port,
+        opts.error ? errorValue(width) : knownValue(value, width),
+        !!opts.weak,
+        opts.enabled,
+      );
     };
 
     const comps = this.flat?.comps ?? [];
     for (const comp of comps) {
-      evalComponent(comp, readOf(comp.id), stateOf(comp.id), driveOf(comp.id), {
-        pinValues: this.pinValues,
-        heldButtons: this.heldButtons,
-        clockValue: (id) => this.clockState.get(id)?.value ?? 0,
-        seqQ: (id) => this.seqState.get(id)?.q ?? 0,
-        seqBits: (id) => this.seqState.get(id)?.bits ?? 1,
-        memory: (c) => this.memory(c),
-      });
+      evalComponent(
+        comp,
+        {
+          read: readOf(comp.id),
+          state: stateOf(comp.id),
+          drive: driveOf(comp.id),
+          readBits: readBitsOf(comp.id),
+          driveBits: driveBitsOf(comp.id),
+        },
+        {
+          pinValues: this.pinValues,
+          heldButtons: this.heldButtons,
+          clockValue: (id) => this.clockState.get(id)?.value ?? 0,
+          seqQ: (id) => this.seqState.get(id)?.q ?? 0,
+          seqBits: (id) => this.seqState.get(id)?.bits ?? 1,
+          memory: (c) => this.memory(c),
+        },
+      );
     }
 
-    // Resolve multiple drivers exactly like Logisim: equal values are fine,
-    // conflicting strong drivers become E, and a weak pull only wins when
-    // nothing strong is driving the net.
+    // Resolve each net bit by bit through the shared four-value resolver: a
+    // driver asserts a bit only where its known/error masks say so, agreeing
+    // strong drivers merge, disagreements mark only the disagreeing bits E,
+    // and a weak pull fills bits no strong driver resolves.
     for (let n = 0; n < nl.nets.length; n++) {
-      const list = this.drivers[n];
-      if (!list.length) {
-        nextStates[n] = FLOATING;
+      const width = nl.nets[n].width;
+      if (nl.forcedError.has(n)) {
+        // Stub nets for width-incompatible ports stay pinned to E.
+        nextError[n] = maskFor(width);
         continue;
       }
-      let strong: Driver | null = null;
-      let strongError = false;
-      let conflict = false;
-      let weak: Driver | null = null;
-      let weakError = false;
-      let weakConflict = false;
-      for (const d of list) {
-        if (d.error) {
-          if (d.weak) weakError = true;
-          else strongError = true;
-          continue;
+      const list = this.drivers[n];
+      if (!list.length) continue; // floating: masks stay 0
+      const perBit: BitDriver[] = [];
+      let value = 0;
+      let known = 0;
+      let error = 0;
+      for (let b = 0; b < width; b++) {
+        perBit.length = 0;
+        for (const d of list) {
+          if ((d.error >>> b) & 1) perBit.push({ value: 0, error: true, weak: d.weak });
+          else if ((d.known >>> b) & 1) perBit.push({ value: (d.value >>> b) & 1, error: false, weak: d.weak });
         }
-        if (d.weak) {
-          if (!weak) weak = d;
-          else if (weak.value !== d.value) weakConflict = true;
-        } else {
-          if (!strong) strong = d;
-          else if (strong.value !== d.value) conflict = true;
-        }
+        const r = resolveBitDrivers(perBit, 1);
+        value |= r.value << b;
+        known |= r.known << b;
+        error |= r.error << b;
       }
-      if (strongError || conflict) {
-        nextStates[n] = ERROR;
-      } else if (strong) {
-        nextValuesOr(next, n, strong.value);
-        nextStates[n] = KNOWN;
-      } else if (weakError || weakConflict) {
-        nextStates[n] = ERROR;
-      } else if (weak) {
-        nextValuesOr(next, n, weak.value);
-        nextStates[n] = KNOWN;
-      } else {
-        nextStates[n] = FLOATING;
-      }
+      next[n] = value >>> 0;
+      nextKnown[n] = known >>> 0;
+      nextError[n] = error >>> 0;
     }
 
     if (useScratch) {
       let changed = false;
       this.lastChangedNets.clear();
       for (let i = 0; i < next.length; i++) {
-        if (next[i] !== prev[i] || nextStates[i] !== prevStates[i]) {
+        if (next[i] !== prev[i] || nextKnown[i] !== prevKnown[i] || nextError[i] !== prevError[i]) {
           changed = true;
           this.lastChangedNets.add(i);
         }
@@ -717,9 +834,12 @@ export class Simulator {
       const tmp = this.values;
       this.values = this.scratch;
       this.scratch = tmp;
-      const tmpS = this.states;
-      this.states = this.scratchStates;
-      this.scratchStates = tmpS;
+      const tmpK = this.known;
+      this.known = this.scratchKnown;
+      this.scratchKnown = tmpK;
+      const tmpE = this.error;
+      this.error = this.scratchError;
+      this.scratchError = tmpE;
       return changed;
     }
     return true;
@@ -729,14 +849,20 @@ export class Simulator {
     const nl = this.netlist;
     if (!nl) return 0;
     const n = nl.portNet.get(`${compId}:${port}`);
-    return n === undefined || this.states[n] !== KNOWN ? 0 : this.values[n] >>> 0;
+    if (n === undefined) return 0;
+    const mask = maskFor(nl.nets[n].width);
+    return (this.known[n] & mask) >>> 0 === mask ? this.values[n] >>> 0 : 0;
   }
 
   private netKnown(compId: string, port: string): boolean {
     const nl = this.netlist;
     if (!nl) return false;
     const n = nl.portNet.get(`${compId}:${port}`);
-    return n !== undefined && this.states[n] === KNOWN;
+    if (n === undefined) return false;
+    const mask = maskFor(nl.nets[n].width);
+    // Sequential inputs keep their whole-port requirement: capture only when
+    // every bit of the net is known (no Z, no E).
+    return (this.known[n] & mask) >>> 0 === mask;
   }
 
   private compute(): boolean {
@@ -744,18 +870,33 @@ export class Simulator {
     if (!nl) return false;
     let changed = false;
     let settled = false;
+    const recentChanged: Set<number>[] = [];
     for (let i = 0; i < 64; i++) {
       const ch = this.evalOnce(true);
-      if (ch) changed = true;
-      else {
+      if (ch) {
+        changed = true;
+        recentChanged.push(new Set(this.lastChangedNets));
+      } else {
         settled = true;
         break;
       }
     }
     if (!settled) {
-      // Feedback did not settle. Only the nets that kept changing are marked
-      // as E, so unrelated parts of the circuit stay usable.
-      for (const n of this.lastChangedNets) this.states[n] = ERROR;
+      // Feedback did not settle. The unstable region is every net that kept
+      // changing through the final passes (a stable net may have flipped only
+      // during the early transient); mark exactly those nets E so the rest of
+      // the circuit stays usable.
+      const unstable = new Set<number>();
+      for (const pass of recentChanged.slice(-8)) for (const n of pass) unstable.add(n);
+      for (const n of unstable) {
+        this.values[n] = 0;
+        this.known[n] = 0;
+        this.error[n] = maskFor(nl.nets[n].width);
+      }
+      this.oscillationState = { nets: unstable };
+    } else {
+      // A later convergence (after an edit, reset, or resume) clears it.
+      this.oscillationState = null;
     }
 
     // Sequential updates see the stable combinational values.
@@ -1011,23 +1152,30 @@ export class Simulator {
           st.nextAt = now + 500 / Math.max(0.2, comp.attrs.freq ?? 2);
         }
         this.running = true;
+        // Re-evaluate on resume so a recovered circuit is not kept frozen by
+        // a stale oscillation diagnosis.
+        if (this.oscillationState) this.dirty = true;
       }
-      let clockChanged = false;
-      for (const comp of this.flat?.comps ?? []) {
-        if (comp.kind !== 'clock') continue;
-        const freq = Math.max(0.2, Math.min(40, comp.attrs.freq ?? 2));
-        const half = 500 / freq;
-        const st = this.clock(comp.id, now);
-        if (st.nextAt < now - half * 4) st.nextAt = now + half;
-        let toggles = 0;
-        while (now >= st.nextAt && toggles < 8) {
-          st.value = st.value ? 0 : 1;
-          st.nextAt += half;
-          toggles++;
-          clockChanged = true;
+      // Oscillation freezes clock advancement: no toggles and no catch-up, so
+      // resuming later never replays wall-clock ticks accumulated meanwhile.
+      if (!this.oscillationState) {
+        let clockChanged = false;
+        for (const comp of this.flat?.comps ?? []) {
+          if (comp.kind !== 'clock') continue;
+          const freq = Math.max(0.2, Math.min(40, comp.attrs.freq ?? 2));
+          const half = 500 / freq;
+          const st = this.clock(comp.id, now);
+          if (st.nextAt < now - half * 4) st.nextAt = now + half;
+          let toggles = 0;
+          while (now >= st.nextAt && toggles < 8) {
+            st.value = st.value ? 0 : 1;
+            st.nextAt += half;
+            toggles++;
+            clockChanged = true;
+          }
         }
+        if (clockChanged) this.dirty = true;
       }
-      if (clockChanged) this.dirty = true;
     }
     if (this.dirty) return this.compute();
     return false;
@@ -1068,13 +1216,16 @@ export class Simulator {
     }
     for (const st of this.clockState.values()) st.value = 0;
     this.heldButtons.clear();
+    // Reset begins a fresh detection cycle; the next compute may legitimately
+    // flag the same unchanged circuit again.
+    this.oscillationState = null;
     this.tick++;
     this.dirty = true;
     if (compute) this.compute();
   }
 
-  ensure(doc: Doc, circuits?: Record<string, Doc>) {
-    this.update(doc, circuits);
+  ensure(doc: Doc, circuits?: Record<string, Doc>, rootId?: string) {
+    this.update(doc, circuits, rootId);
     if (this.dirty) this.compute();
   }
 
@@ -1088,25 +1239,46 @@ export class Simulator {
 
   valueOfNet(netId: number): SimValue {
     const nl = this.netlist;
-    if (!nl || netId < 0 || netId >= nl.nets.length) return { value: 0, width: 1, high: false, state: 'z' };
-    const st = this.states[netId];
+    if (!nl || netId < 0 || netId >= nl.nets.length) {
+      return { value: 0, width: 1, high: false, state: 'z', known: 0, error: 0 };
+    }
+    const width = nl.nets[netId].width;
+    const bits = maskBits(
+      {
+        value: this.values[netId] ?? 0,
+        known: this.known[netId] ?? 0,
+        error: this.error[netId] ?? 0,
+      },
+      width,
+    );
     return {
-      value: this.values[netId] ?? 0,
-      width: nl.nets[netId].width,
-      high: st === KNOWN && (this.values[netId] ?? 0) !== 0,
-      state: st === KNOWN ? 'known' : st === ERROR ? 'e' : 'z',
+      value: bits.value,
+      width,
+      high: bits.known === maskFor(width) && bits.value !== 0,
+      state: stateOfBits(bits, width),
+      known: bits.known,
+      error: bits.error,
     };
   }
 
   valueOfWire(wireIndex: number): SimValue {
     const nl = this.netlist;
-    if (!nl) return { value: 0, width: 1, high: false, state: 'z' };
+    if (!nl) return { value: 0, width: 1, high: false, state: 'z', known: 0, error: 0 };
     return this.valueOfNet(nl.wireNet[wireIndex]);
+  }
+
+  /** Value of a flattened wire by its (possibly instance-prefixed) id. */
+  valueOfWireId(wireId: string): SimValue | null {
+    const nl = this.netlist;
+    if (!nl) return null;
+    const n = nl.wireIdNet.get(wireId);
+    if (n === undefined) return null;
+    return this.valueOfNet(n);
   }
 
   valueOfPort(compId: string, port: string): SimValue {
     const nl = this.netlist;
-    if (!nl) return { value: 0, width: 1, high: false, state: 'z' };
+    if (!nl) return { value: 0, width: 1, high: false, state: 'z', known: 0, error: 0 };
     const n = nl.portNet.get(`${compId}:${port}`);
     return this.valueOfNet(n ?? -1);
   }
@@ -1125,13 +1297,14 @@ export class Simulator {
     return this.compute();
   }
 
+  /** Unstable nets when the latest compute failed to settle, else null. */
+  get oscillation(): { nets: ReadonlySet<number> } | null {
+    return this.oscillationState;
+  }
+
   get runningState() {
     return this.running;
   }
-}
-
-function nextValuesOr(arr: Uint32Array, index: number, value: number) {
-  arr[index] = value >>> 0;
 }
 
 export const sim = new Simulator();

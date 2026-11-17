@@ -15,7 +15,7 @@ import {
   rotateFacing,
 } from '../model/types';
 import { buildNetlist } from '../model/netlist';
-import { computeSubLayout, syncSubLayouts } from '../model/hierarchy';
+import { computeSubLayout, flatId, syncSubLayouts } from '../model/hierarchy';
 import { createComp, uid } from '../model/specs';
 import { followMovedWires } from '../model/editing';
 import { sim } from '../model/sim';
@@ -222,6 +222,13 @@ interface EditorState {
   circuits: Record<string, Doc>;
   circuitOrder: string[];
   currentCircuit: string;
+  /** Circuit the simulator flattens from; null means nothing is simulated. */
+  simRootId: string | null;
+  /**
+   * Instance path of the viewed circuit relative to the simulation root:
+   * [] at the root, ['a','b'] inside instance b of a, null when detached.
+   */
+  simPath: string[] | null;
   past: Doc[];
   future: Doc[];
   selComps: string[];
@@ -250,6 +257,7 @@ interface EditorState {
   autosaveBlocked: boolean;
   cursorWorld: Point | null;
   simTick: number;
+  oscillationAlerted: boolean;
   menu: { x: number; y: number; target: 'comp' | 'wire' | 'canvas'; wireId?: string; world?: Point } | null;
   dragMode: null | 'move' | 'wire' | 'marquee' | 'pan';
   coalesceKey: string;
@@ -268,6 +276,9 @@ interface EditorState {
   canRedo: () => boolean;
 
   switchCircuit: (id: string) => void;
+  setSimulationRoot: (id: string) => void;
+  enterInstance: (compId: string) => void;
+  exitInstance: () => void;
   createCircuit: (name?: string, doc?: Doc) => string;
   deleteCircuit: (id: string) => void;
   addSubcircuit: (targetId: string, at: Point, facing?: ComponentInstance['facing']) => ComponentInstance | null;
@@ -291,6 +302,7 @@ interface EditorState {
   setDragMode: (m: EditorState['dragMode']) => void;
   setCursorWorld: (p: Point | null) => void;
   setSimTick: (n: number) => void;
+  reportOscillation: (active: boolean) => void;
   setMenu: (m: EditorState['menu']) => void;
   toastMsg: (text: string, tone?: ToastTone) => void;
   dismissToast: () => void;
@@ -359,6 +371,8 @@ export const useEditor = create<EditorState>((set, get) => ({
   circuits: initialNormalized,
   circuitOrder: initialOrder,
   currentCircuit: initialCurrent,
+  simRootId: initialCurrent,
+  simPath: [],
   past: [],
   future: [],
   selComps: [],
@@ -390,6 +404,7 @@ export const useEditor = create<EditorState>((set, get) => ({
   autosaveBlocked: autosaveIsBlocked(),
   cursorWorld: null,
   simTick: 0,
+  oscillationAlerted: false,
   menu: null,
   dragMode: null,
   coalesceKey: '',
@@ -398,12 +413,16 @@ export const useEditor = create<EditorState>((set, get) => ({
   snapshotProject: () => {
     const s = get();
     // Capture RAM contents written during simulation into the saved snapshot.
+    // Only circuits attached to the simulation root carry live memory; a
+    // detached view keeps the authored contents.
+    const path = s.simPath;
     const currentDoc: Doc = {
       ...s.doc,
       comps: s.doc.comps.map((comp) => {
         if (comp.kind !== 'ram' && comp.kind !== 'rom') return comp;
-        if (sim.netOfPort(comp.id, 'dout') < 0) return comp;
-        return { ...comp, attrs: { ...comp.attrs, memory: sim.memoryValues(comp) } };
+        const flat = path ? flatId(path, comp.id) : null;
+        if (!flat || sim.netOfPort(flat, 'dout') < 0) return comp;
+        return { ...comp, attrs: { ...comp.attrs, memory: sim.memoryValues({ ...comp, id: flat }) } };
       }),
     };
     return {
@@ -432,6 +451,8 @@ export const useEditor = create<EditorState>((set, get) => ({
       circuits: project.circuits,
       circuitOrder: project.order,
       currentCircuit: project.current,
+      simRootId: project.current,
+      simPath: [],
       past: [],
       future: [],
       selComps: [],
@@ -462,6 +483,8 @@ export const useEditor = create<EditorState>((set, get) => ({
       circuits: normalized,
       circuitOrder: order,
       currentCircuit: current,
+      simRootId: current,
+      simPath: [],
       past: [],
       future: [],
       selComps: [],
@@ -489,6 +512,8 @@ export const useEditor = create<EditorState>((set, get) => ({
       circuits: project.circuits,
       circuitOrder: project.order,
       currentCircuit: project.current,
+      simRootId: project.current,
+      simPath: [],
       past: [],
       future: [],
       selComps: [],
@@ -586,13 +611,81 @@ export const useEditor = create<EditorState>((set, get) => ({
       doc: nextDoc,
       circuits,
       currentCircuit: id,
+      // Plain navigation never disturbs the simulation: the root stays put
+      // and the view is attached only when looking at the root itself.
+      simPath: id === s.simRootId ? [] : null,
       past: [],
       future: [],
       selComps: [],
       selWires: [],
       pendingKind: null,
     });
+  },
+
+  setSimulationRoot: (id) => {
+    const s = get();
+    if (!s.circuits[id]) return;
+    set({
+      simRootId: id,
+      simPath: id === s.currentCircuit ? [] : null,
+    });
+    // Re-anchoring the root is explicit: the old runtime state is discarded.
     sim.reset();
+  },
+
+  enterInstance: (compId) => {
+    const s = get();
+    const comp = s.doc.comps.find((c) => c.id === compId);
+    if (!comp || comp.kind !== 'sub' || !comp.attrs.circuit) return;
+    const target = comp.attrs.circuit;
+    if (!s.circuits[target]) return;
+    const circuits = normalizeProject({ ...s.circuits, [s.currentCircuit]: s.doc });
+    const nextDoc = cloneDoc(circuits[target]);
+    circuits[target] = nextDoc;
+    set({
+      doc: nextDoc,
+      circuits,
+      currentCircuit: target,
+      // Entering from a detached view cannot attach a path: the instance is
+      // not reachable from the simulation root.
+      simPath: s.simPath ? [...s.simPath, compId] : null,
+      past: [],
+      future: [],
+      selComps: [],
+      selWires: [],
+      pendingKind: null,
+    });
+  },
+
+  exitInstance: () => {
+    const s = get();
+    if (!s.simPath || !s.simPath.length || !s.simRootId) return;
+    const parentPath = s.simPath.slice(0, -1);
+    let parentId: string | null = s.simRootId;
+    for (const instId of parentPath) {
+      const comp: ComponentInstance | undefined = parentId
+        ? s.circuits[parentId]?.comps.find((c) => c.id === instId)
+        : undefined;
+      if (!comp?.attrs.circuit) {
+        parentId = null;
+        break;
+      }
+      parentId = comp.attrs.circuit;
+    }
+    if (!parentId || !s.circuits[parentId]) return;
+    const circuits = normalizeProject({ ...s.circuits, [s.currentCircuit]: s.doc });
+    const nextDoc = cloneDoc(circuits[parentId]);
+    circuits[parentId] = nextDoc;
+    set({
+      doc: nextDoc,
+      circuits,
+      currentCircuit: parentId,
+      simPath: parentPath,
+      past: [],
+      future: [],
+      selComps: [],
+      selWires: [],
+    });
   },
 
   createCircuit: (name, doc) => {
@@ -624,17 +717,23 @@ export const useEditor = create<EditorState>((set, get) => ({
     delete circuits[id];
     const nextId = s.currentCircuit === id ? order[0] : s.currentCircuit;
     const normalized = normalizeProject(circuits);
+    const rootDeleted = id === s.simRootId;
+    const nextRoot = rootDeleted ? nextId : s.simRootId;
     set({
       doc: normalized[nextId],
       circuits: normalized,
       circuitOrder: order,
       currentCircuit: nextId,
+      simRootId: nextRoot,
+      simPath: rootDeleted ? [] : nextId === nextRoot ? [] : null,
       past: [],
       future: [],
       selComps: [],
       selWires: [],
     });
-    sim.reset();
+    // Deleting an unreferenced circuit cannot affect the flattened netlist,
+    // so only a root deletion explicitly resets the simulation.
+    if (rootDeleted) sim.reset();
   },
 
   addSubcircuit: (targetId, at, facing = 'east') => {
@@ -704,6 +803,19 @@ export const useEditor = create<EditorState>((set, get) => ({
   setDragMode: (dragMode) => set({ dragMode }),
   setCursorWorld: (cursorWorld) => set({ cursorWorld }),
   setSimTick: (simTick) => set({ simTick }),
+  reportOscillation: (active) => {
+    const s = get();
+    if (active) {
+      if (s.oscillationAlerted) return;
+      set({
+        oscillationAlerted: true,
+        running: false,
+        toast: { id: Date.now() + Math.random(), text: tr(s.lang, 'sim.oscillation'), tone: 'error' },
+      });
+    } else if (s.oscillationAlerted) {
+      set({ oscillationAlerted: false });
+    }
+  },
   setMenu: (menu) => set({ menu }),
   toastMsg: (text, tone = 'info') =>
     set({ toast: { id: Date.now() + Math.random(), text, tone } }),

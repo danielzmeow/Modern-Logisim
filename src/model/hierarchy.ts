@@ -83,6 +83,18 @@ export interface FlattenResult {
 }
 
 /**
+ * Stable identity of one component or wire inside the flattened netlist.
+ * `path` is the list of subcircuit instance ids from the simulation root
+ * down to (and including) the instance that owns `id`; an empty path means
+ * the object lives directly in the root circuit and keeps its original id.
+ * The root circuit's name is never part of the identity, so renaming the
+ * root cannot disturb simulation state.
+ */
+export function flatId(path: string[], id: string): string {
+  return path.length ? `${path.join('/')}/${id}` : id;
+}
+
+/**
  * Flatten a project into one synthetic circuit for the simulator.
  *
  * Every subcircuit instance is copied into an isolated coordinate region and a
@@ -91,22 +103,28 @@ export interface FlattenResult {
  * for connectivity, so the virtual wires never leak into the rendered canvas.
  * Input pins inside an instance are marked as pass-through interfaces so they
  * do not drive the net with a default 0.
+ *
+ * `rootId` is the stable circuit id of `root`; instance contents are prefixed
+ * with their instance path only, never with the root's display name.
  */
-export function flattenCircuit(root: Doc, circuits: Record<string, Doc>): FlattenResult {
+export function flattenCircuit(
+  root: Doc,
+  circuits: Record<string, Doc>,
+  rootId?: string,
+): FlattenResult {
   const errors: string[] = [];
   const comps: ComponentInstance[] = [];
   const wires: Doc['wires'] = [];
   let instanceSeq = 0;
-  let wireSeq = 0;
 
   const nextOffset = () => {
     const i = instanceSeq++;
     return { x: 2_000_000 + (i % 40) * 120_000, y: 2_000_000 + Math.floor(i / 40) * 120_000 };
   };
 
-  const addVirtualWire = (a: { x: number; y: number }, b: { x: number; y: number }) => {
+  const addVirtualWire = (id: string, a: { x: number; y: number }, b: { x: number; y: number }) => {
     wires.push({
-      id: `v${wireSeq++}`,
+      id,
       a: { x: Math.round(a.x), y: Math.round(a.y) },
       b: { x: Math.round(b.x), y: Math.round(b.y) },
     });
@@ -115,7 +133,7 @@ export function flattenCircuit(root: Doc, circuits: Record<string, Doc>): Flatte
   const instantiate = (
     target: Doc,
     offset: { x: number; y: number },
-    path: string,
+    path: string[],
     stack: string[],
     depth: number,
   ) => {
@@ -123,10 +141,9 @@ export function flattenCircuit(root: Doc, circuits: Record<string, Doc>): Flatte
       errors.push('Subcircuit nesting is too deep');
       return;
     }
-    const prefix = `${path}/`;
     const map = new Map<string, ComponentInstance>();
     const copies: ComponentInstance[] = target.comps.map((comp) => {
-      const id = `${prefix}${comp.id}`;
+      const id = flatId(path, comp.id);
       const copy: ComponentInstance = {
         ...comp,
         id,
@@ -137,7 +154,7 @@ export function flattenCircuit(root: Doc, circuits: Record<string, Doc>): Flatte
           // Tunnels are scoped to a circuit instance in Logisim. Without the
           // path prefix, same-named tunnels in two instances would merge.
           ...(comp.kind === 'tunnel'
-            ? { label: `${path}::${comp.attrs.label ?? 'net'}` }
+            ? { label: `${path.join('::')}::${comp.attrs.label ?? 'net'}` }
             : {}),
         },
       };
@@ -147,7 +164,7 @@ export function flattenCircuit(root: Doc, circuits: Record<string, Doc>): Flatte
     comps.push(...copies);
     for (const w of target.wires) {
       wires.push({
-        id: `${prefix}w${wireSeq++}`,
+        id: flatId(path, w.id),
         a: { x: w.a.x + offset.x, y: w.a.y + offset.y },
         b: { x: w.b.x + offset.x, y: w.b.y + offset.y },
       });
@@ -167,23 +184,18 @@ export function flattenCircuit(root: Doc, circuits: Record<string, Doc>): Flatte
         errors.push(`Recursive subcircuit: ${original.attrs.circuit}`);
         continue;
       }
+      const childPath = [...path, original.id];
       const innerOffset = nextOffset();
       const before = comps.length;
-      instantiate(
-        nestedTarget,
-        innerOffset,
-        `${prefix}${original.id}`,
-        [...stack, original.attrs.circuit],
-        depth + 1,
-      );
+      instantiate(nestedTarget, innerOffset, childPath, [...stack, original.attrs.circuit], depth + 1);
       const pins = copy.attrs.subPins ?? [];
       for (const pin of pins) {
-        const inner = comps.slice(before).find((c) => c.id === `${prefix}${original.id}/${pin.id}`);
+        const inner = comps.slice(before).find((c) => c.id === flatId(childPath, pin.id));
         if (!inner) continue;
         const innerPort = portsOf(inner).find((p) => (pin.kind === 'input' ? p.name === 'out' : p.name === 'in'));
         if (!innerPort) continue;
         const outerLocal = { x: pin.kind === 'input' ? 0 : (copy.attrs.subW ?? 80), y: pin.y };
-        addVirtualWire(toWorld(copy, outerLocal), innerPort.world);
+        addVirtualWire(`v/${flatId(childPath, pin.id)}`, toWorld(copy, outerLocal), innerPort.world);
       }
     }
   };
@@ -191,8 +203,11 @@ export function flattenCircuit(root: Doc, circuits: Record<string, Doc>): Flatte
   comps.push(...root.comps);
   wires.push(...root.wires);
 
-  const rootId = Object.keys(circuits).find((id) => circuits[id] === root);
-  const rootStack = [rootId ?? root.name];
+  const resolvedRootId =
+    (rootId && circuits[rootId] ? rootId : undefined) ??
+    Object.keys(circuits).find((id) => circuits[id] === root) ??
+    root.name;
+  const rootStack = [resolvedRootId];
   for (let i = 0; i < root.comps.length; i++) {
     const original = root.comps[i];
     if (original.kind !== 'sub' || !original.attrs.circuit) continue;
@@ -205,21 +220,22 @@ export function flattenCircuit(root: Doc, circuits: Record<string, Doc>): Flatte
       errors.push(`Recursive subcircuit: ${original.attrs.circuit}`);
       continue;
     }
+    const childPath = [original.id];
     const before = comps.length;
     const offset = nextOffset();
-    instantiate(target, offset, `${root.name}/${original.id}`, [...rootStack, original.attrs.circuit], 1);
+    instantiate(target, offset, childPath, [...rootStack, original.attrs.circuit], 1);
     const fallbackLayout = computeSubLayout(target);
     const pins = original.attrs.subPins?.length ? original.attrs.subPins : fallbackLayout.subPins;
     const subW = original.attrs.subPins?.length ? original.attrs.subW ?? fallbackLayout.subW : fallbackLayout.subW;
     for (const pin of pins) {
       const inner = comps
         .slice(before)
-        .find((c) => c.id === `${root.name}/${original.id}/${pin.id}`);
+        .find((c) => c.id === flatId(childPath, pin.id));
       if (!inner) continue;
       const innerPort = portsOf(inner).find((p) => (pin.kind === 'input' ? p.name === 'out' : p.name === 'in'));
       if (!innerPort) continue;
       const outerLocal = { x: pin.kind === 'input' ? 0 : subW, y: pin.y };
-      addVirtualWire(toWorld(original, outerLocal), innerPort.world);
+      addVirtualWire(`v/${flatId(childPath, pin.id)}`, toWorld(original, outerLocal), innerPort.world);
     }
   }
 

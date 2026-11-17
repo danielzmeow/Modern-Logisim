@@ -2,9 +2,11 @@ import { useEditor } from '../editor/store';
 import { LogoMark } from './icons';
 import { exportCircFile, newCircuit, openProject, saveProject } from '../editor/fileActions';
 import { sim } from '../model/sim';
+import { describePath } from '../model/simView';
 import { viewControls } from '../canvas/view';
 import { useT } from './useT';
 import {
+  ChevronLeft,
   Download,
   FilePlus2,
   FolderOpen,
@@ -31,12 +33,22 @@ export function Topbar() {
   const undo = useEditor((s) => s.undo);
   const redo = useEditor((s) => s.redo);
   const setPaletteOpen = useEditor((s) => s.setPaletteOpen);
+  const circuits = useEditor((s) => s.circuits);
+  const simRootId = useEditor((s) => s.simRootId);
+  const simPath = useEditor((s) => s.simPath);
   const { t } = useT();
 
   const resetSim = () => {
     sim.reset();
+    // The fresh detection cycle may legitimately flag the same circuit again.
+    useEditor.getState().reportOscillation(false);
     viewControls.invalidate();
   };
+
+  const pathSegments =
+    simPath === null || simRootId === null
+      ? null
+      : describePath({ circuits, rootId: simRootId, path: simPath });
 
   return (
     <header className="topbar relative z-30 flex h-[52px] shrink-0 items-center gap-2 px-3">
@@ -63,6 +75,40 @@ export function Topbar() {
           onChange={(e) => setName(e.target.value)}
           onFocus={(e) => e.currentTarget.select()}
         />
+        {simPath === null ? (
+          <span
+            className="hidden shrink-0 rounded-md border border-[var(--warning-text)] bg-[var(--warning-soft)] px-1.5 py-0.5 text-[11px] font-medium text-[var(--warning-text)] lg:inline-block"
+            title={t('topbar.simPathTitle')}
+          >
+            {t('topbar.simDetached')}
+          </span>
+        ) : (
+          <span
+            className="hidden min-w-0 shrink-0 items-center gap-0.5 rounded-md border border-[var(--line)] bg-[var(--card)] px-1.5 py-0.5 text-[11px] font-medium text-[var(--text-secondary)] lg:flex"
+            title={t('topbar.simPathTitle')}
+          >
+            {simPath.length > 0 && (
+              <button
+                className="icon-btn !h-4 !w-4"
+                title={t('topbar.backInstance')}
+                aria-label={t('topbar.backInstance')}
+                onClick={() => {
+                  useEditor.getState().exitInstance();
+                  viewControls.invalidate();
+                }}
+              >
+                <ChevronLeft size={11} strokeWidth={2.2} />
+              </button>
+            )}
+            <span className="max-w-[120px] truncate">{circuits[simRootId ?? '']?.name ?? '—'}</span>
+            {pathSegments?.map((seg, i) => (
+              <span key={i} className="flex min-w-0 items-center gap-0.5">
+                <span className="text-[var(--text-faint)]">/</span>
+                <span className="max-w-[90px] truncate">{seg.label}</span>
+              </span>
+            ))}
+          </span>
+        )}
         <div className="hidden items-center gap-1.5 pl-1 text-[11px] font-medium text-[var(--text-secondary)] lg:flex">
           <span
             className={`h-[5px] w-[5px] rounded-full ${

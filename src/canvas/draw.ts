@@ -3,7 +3,9 @@ import { isGate, KIND_NAMES, KIND_NAMES_EN, pointKey } from '../model/types';
 import type { Lang } from '../i18n';
 import { geom, rotatedBounds, portsOf, estimateTextWidth, type Hit, type Bounds } from '../model/geometry';
 import { laneSummary } from '../model/buses';
-import { maskFor, type Simulator } from '../model/sim';
+import { maskFor } from '../model/sim';
+import type { SimValue } from '../model/sim';
+import type { SimView } from '../model/simView';
 import { PALETTES, LED_COLORS, UI_FONT, MONO_FONT, type Palette } from './theme';
 
 export interface WiringPreview {
@@ -16,7 +18,8 @@ export interface WiringPreview {
 export interface SceneOptions {
   ctx: CanvasRenderingContext2D;
   doc: Doc;
-  sim: Simulator;
+  /** Mapped read access to the simulated root netlist for the viewed circuit. */
+  view: SimView;
   selComps: string[];
   selWires: string[];
   hover: Hit;
@@ -61,6 +64,14 @@ export function formatValue(v: number, bits: number): string {
   if (b === 1) return String(v & 1);
   const digits = Math.ceil(b / 4);
   return ((v >>> 0) & maskFor(b)).toString(16).toUpperCase().padStart(digits, '0');
+}
+
+/** Neutral placeholder for unavailable runtime values (detached views). */
+const NO_READOUT = '—';
+
+/** Numeric readout text; a neutral placeholder when the view has no runtime value. */
+function readoutText(sv: SimValue | null, bits: number): string {
+  return sv ? formatValue(sv.value, bits) : NO_READOUT;
 }
 
 const dotCache = new WeakMap<Doc, Point[]>();
@@ -338,11 +349,12 @@ function drawComponentInner(
   ctx: CanvasRenderingContext2D,
   comp: ComponentInstance,
   pal: Palette,
-  sim: Simulator,
+  view: SimView,
   ghost: boolean,
 ) {
   const g = geom(comp);
   const kind = comp.kind;
+  const vp = (port: string): SimValue | null => view.valueOfPortAt(comp.id, port);
 
   if (isGate(kind)) {
     drawGate(ctx, comp, g, pal, kind === 'nand' || kind === 'nor' || kind === 'xnor');
@@ -355,12 +367,20 @@ function drawComponentInner(
     case 'constant': {
       const bits = kind === 'constant' ? g.ports[0]?.bits ?? 1 : g.ports[0]?.bits ?? 1;
       const netPort = kind === 'input' ? 'out' : 'in';
-      const sv = ghost ? { value: 0, state: 'known' as const } : sim.valueOfPort(comp.id, netPort);
+      const sv = ghost ? ({ value: 0, state: 'known' as const } as SimValue) : vp(netPort);
       let text: string;
       if (kind === 'constant') {
         text = formatValue(comp.attrs.value ?? 0, comp.attrs.bits ?? 8);
       } else if (kind === 'input') {
-        text = formatValue(ghost ? 0 : sim.pinValue(comp.id), bits);
+        if (ghost) {
+          text = formatValue(0, bits);
+        } else {
+          // Detached views must not fabricate a pin value: show a placeholder.
+          const pin = view.pinValueAt(comp.id);
+          text = pin === null ? NO_READOUT : formatValue(pin, bits);
+        }
+      } else if (!sv) {
+        text = NO_READOUT;
       } else if (sv.state === 'e') {
         text = 'E';
       } else if (sv.state === 'z') {
@@ -368,8 +388,8 @@ function drawComponentInner(
       } else {
         text = formatValue(sv.value, bits);
       }
-      drawPinBody(ctx, comp, g, pal, text, borderIsHigh(comp, sv.value, ghost), false);
-      if (kind === 'output' && sv.state !== 'known') {
+      drawPinBody(ctx, comp, g, pal, text, borderIsHigh(comp, sv?.value ?? 0, ghost), false);
+      if (kind === 'output' && sv && sv.state !== 'known') {
         ctx.save();
         ctx.strokeStyle = sv.state === 'e' ? pal.wireError : pal.wireZ;
         ctx.lineWidth = 1.4;
@@ -381,12 +401,12 @@ function drawComponentInner(
       break;
     }
     case 'button': {
-      const pressed = !ghost && sim.isHeld(comp.id);
+      const pressed = !ghost && view.isHeldAt(comp.id);
       drawPinBody(ctx, comp, g, pal, pressed ? '1' : '0', pressed, true, pressed);
       break;
     }
     case 'clock': {
-      const sv = ghost ? { value: 0 } : sim.valueOfPort(comp.id, 'out');
+      const sv = ghost ? ({ value: 0 } as SimValue) : vp('out');
       roundedRect(ctx, g.x + 0.8, g.y + 0.8, g.w - 1.6, g.h - 1.6, 5);
       ctx.fillStyle = pal.chipFill;
       ctx.fill();
@@ -394,7 +414,7 @@ function drawComponentInner(
       ctx.lineWidth = 1.4;
       ctx.stroke();
       ctx.save();
-      ctx.strokeStyle = sv.value ? pal.wireHigh : pal.muted;
+      ctx.strokeStyle = sv && sv.value ? pal.wireHigh : pal.muted;
       ctx.lineWidth = 1.4;
       ctx.lineJoin = 'miter';
       ctx.beginPath();
@@ -411,8 +431,8 @@ function drawComponentInner(
       break;
     }
     case 'led': {
-      const sv = ghost ? { value: 0, state: 'known' as const } : sim.valueOfPort(comp.id, 'in');
-      const on = sv.value !== 0;
+      const sv = ghost ? ({ value: 0, state: 'known' as const } as SimValue) : vp('in');
+      const on = !!sv && sv.value !== 0;
       const color = LED_COLORS[comp.attrs.color ?? 'emerald'] ?? LED_COLORS.emerald;
       const cx = 10;
       const cy = 0;
@@ -440,9 +460,9 @@ function drawComponentInner(
       ctx.beginPath();
       ctx.arc(cx, cy, 6.6, 0, Math.PI * 2);
       ctx.strokeStyle =
-        sv.state === 'e' ? pal.wireError : sv.state === 'z' ? pal.wireZ : on ? color : pal.chipStroke;
+        !sv ? pal.chipStroke : sv.state === 'e' ? pal.wireError : sv.state === 'z' ? pal.wireZ : on ? color : pal.chipStroke;
       ctx.lineWidth = 1.5;
-      if (sv.state === 'z') ctx.setLineDash([2, 2]);
+      if (sv && sv.state === 'z') ctx.setLineDash([2, 2]);
       ctx.stroke();
       ctx.setLineDash([]);
       if (on) {
@@ -461,7 +481,7 @@ function drawComponentInner(
       ctx.lineWidth = 1.5;
       ctx.stroke();
 
-      const q = ghost ? 0 : sim.valueOfPort(comp.id, 'q').value;
+      const q = ghost ? 0 : (vp('q')?.value ?? 0);
       // clock triangle
       ctx.beginPath();
       ctx.moveTo(-40, 16);
@@ -494,42 +514,42 @@ function drawComponentInner(
     }
     case 'tff': {
       chipBody(ctx, g, pal);
-      const q = ghost ? 0 : sim.valueOfPort(comp.id, 'q').value;
+      const q = ghost ? ({ value: 0 } as SimValue) : vp('q');
       chipText(ctx, comp, -38, -10, 'T', pal.muted, 8, 'left');
       chipText(ctx, comp, -38, 8, 'TFF', pal.faint, 6, 'left');
-      chipText(ctx, comp, -6, -8, formatValue(q, 1), q ? pal.wireHigh : pal.muted, 8, 'right');
+      chipText(ctx, comp, -6, -8, readoutText(q, 1), q?.value ? pal.wireHigh : pal.muted, 8, 'right');
       break;
     }
     case 'jkff': {
       chipBody(ctx, g, pal);
-      const q = ghost ? 0 : sim.valueOfPort(comp.id, 'q').value;
+      const q = ghost ? ({ value: 0 } as SimValue) : vp('q');
       chipText(ctx, comp, -40, -10, 'J', pal.muted, 8, 'left');
       chipText(ctx, comp, -40, 10, 'K', pal.muted, 8, 'left');
-      chipText(ctx, comp, -6, -12, formatValue(q, 1), q ? pal.wireHigh : pal.muted, 8, 'right');
+      chipText(ctx, comp, -6, -12, readoutText(q, 1), q?.value ? pal.wireHigh : pal.muted, 8, 'right');
       break;
     }
     case 'sr': {
       chipBody(ctx, g, pal);
-      const q = ghost ? 0 : sim.valueOfPort(comp.id, 'q').value;
+      const q = ghost ? ({ value: 0 } as SimValue) : vp('q');
       chipText(ctx, comp, -40, -8, 'S', pal.muted, 8, 'left');
       chipText(ctx, comp, -40, 12, 'R', pal.muted, 8, 'left');
-      chipText(ctx, comp, -6, -8, formatValue(q, 1), q ? pal.wireHigh : pal.muted, 8, 'right');
+      chipText(ctx, comp, -6, -8, readoutText(q, 1), q?.value ? pal.wireHigh : pal.muted, 8, 'right');
       break;
     }
     case 'shift': {
       chipBody(ctx, g, pal);
-      const q = ghost ? { value: 0 } : sim.valueOfPort(comp.id, 'q');
+      const q = ghost ? ({ value: 0 } as SimValue) : vp('q');
       chipText(ctx, comp, -40, -14, 'SHIFT', pal.faint, 7, 'left');
-      chipText(ctx, comp, -6, 0, formatValue(q.value, comp.attrs.bits ?? 8), q.value ? pal.wireHigh : pal.muted, 7, 'right');
+      chipText(ctx, comp, -6, 0, readoutText(q, comp.attrs.bits ?? 8), q?.value ? pal.wireHigh : pal.muted, 7, 'right');
       if (comp.attrs.enable !== false) chipText(ctx, comp, -15, 25, 'EN', pal.faint, 5.5, 'center');
       if (comp.attrs.reset !== false) chipText(ctx, comp, 5, 25, 'R', pal.faint, 5.5, 'center');
       break;
     }
     case 'random': {
       chipBody(ctx, g, pal);
-      const q = ghost ? { value: 0 } : sim.valueOfPort(comp.id, 'q');
+      const q = ghost ? ({ value: 0 } as SimValue) : vp('q');
       chipText(ctx, comp, -40, -14, 'RNG', pal.faint, 8, 'left');
-      chipText(ctx, comp, -6, 0, formatValue(q.value, comp.attrs.bits ?? 8), q.value ? pal.wireHigh : pal.muted, 7, 'right');
+      chipText(ctx, comp, -6, 0, readoutText(q, comp.attrs.bits ?? 8), q?.value ? pal.wireHigh : pal.muted, 7, 'right');
       if (comp.attrs.enable !== false) chipText(ctx, comp, -15, 25, 'EN', pal.faint, 5.5, 'center');
       if (comp.attrs.reset !== false) chipText(ctx, comp, 5, 25, 'R', pal.faint, 5.5, 'center');
       break;
@@ -565,15 +585,15 @@ function drawComponentInner(
       break;
     }
     case 'probe': {
-      const sv = ghost ? { value: 0, state: 'known' as const } : sim.valueOfPort(comp.id, 'in');
+      const sv = ghost ? ({ value: 0, state: 'known' as const } as SimValue) : vp('in');
       const text =
-        sv.state === 'e'
+        !sv ? NO_READOUT : sv.state === 'e'
           ? 'E'
           : sv.state === 'z'
             ? 'Z'
             : formatValue(sv.value, comp.attrs.bits ?? 1);
-      drawPinBody(ctx, comp, g, pal, text, sv.state === 'known' && sv.value !== 0, false);
-      if (sv.state === 'e' || sv.state === 'z') {
+      drawPinBody(ctx, comp, g, pal, text, !!sv && sv.state === 'known' && sv.value !== 0, false);
+      if (sv && (sv.state === 'e' || sv.state === 'z')) {
         ctx.save();
         ctx.strokeStyle = sv.state === 'e' ? pal.wireError : pal.wireZ;
         ctx.lineWidth = 1.3;
@@ -636,7 +656,8 @@ function drawComponentInner(
     }
     case 'ctrlBuffer':
     case 'ctrlInverter': {
-      const enabled = ghost ? false : sim.valueOfPort(comp.id, 'enable').state === 'known' && sim.valueOfPort(comp.id, 'enable').value !== 0;
+      const en = ghost ? ({ value: 0, state: 'known' as const } as SimValue) : vp('enable');
+      const enabled = !!en && en.state === 'known' && en.value !== 0;
       ctx.beginPath();
       ctx.moveTo(-32, -16);
       ctx.lineTo(-2, 0);
@@ -672,26 +693,27 @@ function drawComponentInner(
         ctx.stroke();
       }
       chipText(ctx, comp, -29, 11, 'EN', pal.faint, 6.5, 'center');
-      if (!enabled) chipText(ctx, comp, -17, 0, 'Z', pal.wireZ, 7);
+      // The Z marker means "simulated and floating"; a detached view shows nothing.
+      if (en && !enabled) chipText(ctx, comp, -17, 0, 'Z', pal.wireZ, 7);
       break;
     }
     case 'register': {
       chipBody(ctx, g, pal);
-      const q = ghost ? { value: 0 } : sim.valueOfPort(comp.id, 'q');
+      const q = ghost ? ({ value: 0 } as SimValue) : vp('q');
       chipText(ctx, comp, -34, -14, 'REG', pal.faint, 7, 'left');
       chipText(ctx, comp, -34, 0, 'D', pal.muted, 7, 'left');
       chipText(ctx, comp, -6, -14, comp.attrs.trigger === 'falling' ? '▾' : '▴', pal.muted, 7, 'right');
-      chipText(ctx, comp, -6, 0, formatValue(q.value, comp.attrs.bits ?? 8), q.value ? pal.wireHigh : pal.muted, 7, 'right');
+      chipText(ctx, comp, -6, 0, readoutText(q, comp.attrs.bits ?? 8), q?.value ? pal.wireHigh : pal.muted, 7, 'right');
       if (comp.attrs.enable !== false) chipText(ctx, comp, -15, 25, 'EN', pal.faint, 6, 'center');
       if (comp.attrs.reset !== false) chipText(ctx, comp, 5, 25, 'R', pal.faint, 6, 'center');
       break;
     }
     case 'counter': {
       chipBody(ctx, g, pal);
-      const q = ghost ? { value: 0 } : sim.valueOfPort(comp.id, 'q');
+      const q = ghost ? ({ value: 0 } as SimValue) : vp('q');
       chipText(ctx, comp, -34, -12, 'CNT', pal.faint, 7, 'left');
       chipText(ctx, comp, -6, -12, (comp.attrs.count ?? 'up') === 'down' ? '−' : '+', pal.muted, 7, 'right');
-      chipText(ctx, comp, -6, 1, formatValue(q.value, comp.attrs.bits ?? 8), q.value ? pal.wireHigh : pal.muted, 7, 'right');
+      chipText(ctx, comp, -6, 1, readoutText(q, comp.attrs.bits ?? 8), q?.value ? pal.wireHigh : pal.muted, 7, 'right');
       chipText(ctx, comp, -6, 11, 'C', pal.faint, 6, 'right');
       if (comp.attrs.enable !== false) chipText(ctx, comp, -30, 15, 'EN', pal.faint, 5.5, 'left');
       break;
@@ -703,8 +725,8 @@ function drawComponentInner(
       chipText(ctx, comp, -35, -22, isRam ? 'RAM' : 'ROM', pal.faint, 8, 'left');
       chipText(ctx, comp, -35, -10, `A${comp.attrs.addrBits ?? 4}`, pal.muted, 7, 'left');
       chipText(ctx, comp, -35, 3, `D${comp.attrs.dataBits ?? 8}`, pal.muted, 7, 'left');
-      const sv = ghost ? { value: 0 } : sim.valueOfPort(comp.id, 'dout');
-      chipText(ctx, comp, -34, 18, formatValue(sv.value, comp.attrs.dataBits ?? 8), sv.value ? pal.wireHigh : pal.muted, 7, 'left');
+      const sv = ghost ? ({ value: 0 } as SimValue) : vp('dout');
+      chipText(ctx, comp, -34, 18, readoutText(sv, comp.attrs.dataBits ?? 8), sv?.value ? pal.wireHigh : pal.muted, 7, 'left');
       if (isRam) {
         chipText(ctx, comp, -38, 28, 'WE', pal.faint, 5.5, 'left');
         chipText(ctx, comp, -8, 28, '▴', pal.faint, 5.5, 'right');
@@ -727,15 +749,15 @@ function drawComponentInner(
     }
     case 'negator': {
       chipBody(ctx, g, pal);
-      const sv = ghost ? { value: 0 } : sim.valueOfPort(comp.id, 'out');
+      const sv = ghost ? ({ value: 0 } as SimValue) : vp('out');
       chipText(ctx, comp, -22, -3, 'NEG', pal.faint, 7, 'center');
       chipText(
         ctx,
         comp,
         -8,
         5,
-        formatValue(sv.value, comp.attrs.bits ?? 8),
-        sv.value ? pal.wireHigh : pal.muted,
+        readoutText(sv, comp.attrs.bits ?? 8),
+        sv?.value ? pal.wireHigh : pal.muted,
         7,
         'right',
       );
@@ -743,30 +765,30 @@ function drawComponentInner(
     }
     case 'divider': {
       chipBody(ctx, g, pal);
-      const q = ghost ? { value: 0 } : sim.valueOfPort(comp.id, 'out');
-      const r = ghost ? { value: 0 } : sim.valueOfPort(comp.id, 'rem');
+      const q = ghost ? ({ value: 0 } as SimValue) : vp('out');
+      const r = ghost ? ({ value: 0 } as SimValue) : vp('rem');
       chipText(ctx, comp, -40, -20, '÷', pal.faint, 11, 'left');
       chipText(ctx, comp, -40, -8, 'A/B', pal.faint, 6, 'left');
-      chipText(ctx, comp, -6, -10, formatValue(q.value, comp.attrs.bits ?? 8), q.value ? pal.wireHigh : pal.muted, 7, 'right');
-      chipText(ctx, comp, -6, 10, formatValue(r.value, comp.attrs.bits ?? 8), r.value ? pal.wireHigh : pal.muted, 7, 'right');
+      chipText(ctx, comp, -6, -10, readoutText(q, comp.attrs.bits ?? 8), q?.value ? pal.wireHigh : pal.muted, 7, 'right');
+      chipText(ctx, comp, -6, 10, readoutText(r, comp.attrs.bits ?? 8), r?.value ? pal.wireHigh : pal.muted, 7, 'right');
       break;
     }
     case 'bitAdder': {
       chipBody(ctx, g, pal);
-      const sv = ghost ? { value: 0 } : sim.valueOfPort(comp.id, 'out');
+      const sv = ghost ? ({ value: 0 } as SimValue) : vp('out');
       const outBits = Math.max(1, Math.ceil(Math.log2((comp.attrs.bits ?? 8) + 1)));
       chipText(ctx, comp, -40, -12, 'Σ1s', pal.faint, 8, 'left');
-      chipText(ctx, comp, -6, 10, formatValue(sv.value, outBits), sv.value ? pal.wireHigh : pal.muted, 7, 'right');
+      chipText(ctx, comp, -6, 10, readoutText(sv, outBits), sv?.value ? pal.wireHigh : pal.muted, 7, 'right');
       break;
     }
     case 'bitFinder': {
       chipBody(ctx, g, pal);
-      const index = ghost ? { value: 0 } : sim.valueOfPort(comp.id, 'index');
+      const index = ghost ? ({ value: 0 } as SimValue) : vp('index');
       const mode = comp.attrs.find ?? 'low1';
       const label = mode === 'low1' ? 'L1' : mode === 'high1' ? 'H1' : mode === 'low0' ? 'L0' : 'H0';
       chipText(ctx, comp, -34, -8, 'FIND', pal.faint, 7, 'left');
       chipText(ctx, comp, -34, 6, label, pal.muted, 8, 'left');
-      chipText(ctx, comp, -6, -8, formatValue(index.value, Math.max(1, Math.ceil(Math.log2(comp.attrs.bits ?? 8)))), index.value ? pal.wireHigh : pal.muted, 7, 'right');
+      chipText(ctx, comp, -6, -8, readoutText(index, Math.max(1, Math.ceil(Math.log2(comp.attrs.bits ?? 8)))), index?.value ? pal.wireHigh : pal.muted, 7, 'right');
       break;
     }
     case 'adder':
@@ -776,7 +798,7 @@ function drawComponentInner(
     case 'shifter': {
       chipBody(ctx, g, pal);
       const outPort = comp.kind === 'comparator' ? 'eq' : 'out';
-      const sv = ghost ? { value: 0 } : sim.valueOfPort(comp.id, outPort);
+      const sv = ghost ? ({ value: 0 } as SimValue) : vp(outPort);
       const title =
         comp.kind === 'adder' ? '+' : comp.kind === 'subtractor' ? '−' : comp.kind === 'multiplier' ? '×' : comp.kind === 'comparator' ? 'CMP' : '≪';
       chipText(ctx, comp, -30, -14, title, pal.faint, comp.kind === 'comparator' ? 7 : 11, 'left');
@@ -785,7 +807,7 @@ function drawComponentInner(
         chipText(ctx, comp, -5, 0, '=', pal.muted, 6, 'right');
         chipText(ctx, comp, -5, 10, '<', pal.muted, 6, 'right');
       } else {
-        chipText(ctx, comp, -6, 14, formatValue(sv.value, comp.kind === 'multiplier' ? Math.max(1, Math.min(32, (comp.attrs.bits ?? 8) * 2)) : comp.attrs.bits ?? 8), sv.value ? pal.wireHigh : pal.muted, 7, 'right');
+        chipText(ctx, comp, -6, 14, readoutText(sv, comp.kind === 'multiplier' ? Math.max(1, Math.min(32, (comp.attrs.bits ?? 8) * 2)) : comp.attrs.bits ?? 8), sv?.value ? pal.wireHigh : pal.muted, 7, 'right');
       }
       if (comp.kind === 'shifter') chipText(ctx, comp, -30, 12, comp.attrs.shift === 'left' ? '≪' : comp.attrs.shift === 'arithmetic' ? '⩾' : '≫', pal.faint, 6, 'left');
       break;
@@ -796,7 +818,7 @@ function drawComponentInner(
       const color = LED_COLORS[comp.attrs.color ?? 'rose'] ?? LED_COLORS.rose;
       const active = new Set<string>();
       if (comp.kind === 'hexdigit') {
-        const sv = ghost ? { value: 0 } : sim.valueOfPort(comp.id, 'in');
+        const sv = ghost ? ({ value: 0 } as SimValue) : vp('in');
         const segs: Record<string, string[]> = {
           '0': ['a', 'b', 'c', 'd', 'e', 'f'],
           '1': ['b', 'c'],
@@ -815,16 +837,16 @@ function drawComponentInner(
           e: ['a', 'd', 'e', 'f', 'g'],
           f: ['a', 'e', 'f', 'g'],
         };
-        for (const name of segs[(sv.value & 0xf).toString(16)] ?? []) active.add(name);
+        for (const name of (sv && segs[(sv.value & 0xf).toString(16)]) ?? []) active.add(name);
       } else if (comp.attrs.segMode === 'bus') {
-        const sv = ghost ? { value: 0 } : sim.valueOfPort(comp.id, 'in');
+        const sv = ghost ? ({ value: 0 } as SimValue) : vp('in');
         segNames.forEach((name, i) => {
-          if ((sv.value >>> i) & 1) active.add(name);
+          if (sv && (sv.value >>> i) & 1) active.add(name);
         });
       } else {
         for (const name of segNames) {
-          const sv = ghost ? { value: 0, state: 'known' as const } : sim.valueOfPort(comp.id, name);
-          if (sv.state === 'known' && sv.value) active.add(name);
+          const sv = ghost ? ({ value: 0, state: 'known' as const } as SimValue) : vp(name);
+          if (sv && sv.state === 'known' && sv.value) active.add(name);
         }
       }
       const isSeparate = comp.kind === 'sevenseg' && comp.attrs.segMode !== 'bus';
@@ -964,19 +986,19 @@ function drawCompOuter(
   ctx: CanvasRenderingContext2D,
   comp: ComponentInstance,
   pal: Palette,
-  sim: Simulator,
+  view: SimView,
   ghost = false,
 ) {
   const angle = facingAngle(comp.facing);
   ctx.save();
   ctx.translate(comp.at.x, comp.at.y);
   ctx.rotate(angle);
-  drawComponentInner(ctx, comp, pal, sim, ghost);
+  drawComponentInner(ctx, comp, pal, view, ghost);
   ctx.restore();
 }
 
 export function drawScene(opts: SceneOptions) {
-  const { ctx, doc, sim, zoom, pan, width, height } = opts;
+  const { ctx, doc, view, zoom, pan, width, height } = opts;
   const pal2 = PALETTES[opts.theme];
 
   ctx.save();
@@ -1008,8 +1030,6 @@ export function drawScene(opts: SceneOptions) {
     };
     return { w, i, b, visible: inView(b) };
   });
-  const netlist = sim.netlistOrNull();
-  const issueNets = new Set(netlist?.issues.map((issue) => issue.net) ?? []);
 
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
@@ -1055,31 +1075,32 @@ export function drawScene(opts: SceneOptions) {
   const flow = (opts.now / 55) % 16;
   for (const { w, i, visible } of wireInfo) {
     if (!visible) continue;
-    const sv = sim.valueOfWire(i);
-    const bus = sv.width > 1;
-    const widthIssue = netlist ? issueNets.has(netlist.wireNet[i] ?? -1) : false;
+    const sv = view.valueOfWireAt(w.id);
+    // Detached views draw plain wires: no fabricated E/Z marks, no bus badges.
+    const bus = !!sv && sv.width > 1;
+    const widthIssue = !!sv && view.widthIssueAt(w.id);
     const color =
-      sv.state === 'e'
-        ? pal2.wireError
-        : sv.state === 'z'
-          ? pal2.wireZ
-          : widthIssue
-            ? pal2.wireWarn
-            : bus
-              ? pal2.wireBus
-              : sv.value !== 0
-                ? pal2.wireHigh
-                : pal2.wireLow;
+      !sv
+        ? pal2.wireLow
+        : sv.state === 'e'
+          ? pal2.wireError
+          : sv.state === 'z'
+            ? pal2.wireZ
+            : widthIssue
+              ? pal2.wireWarn
+              : bus
+                ? pal2.wireBus
+                : sv.value !== 0
+                  ? pal2.wireHigh
+                  : pal2.wireLow;
     ctx.strokeStyle = color;
     ctx.lineWidth = bus ? 2.9 : 2.1;
-    if (sv.state !== 'known') ctx.setLineDash(sv.state === 'z' ? [4, 4] : [2, 3]);
+    if (sv && sv.state !== 'known') ctx.setLineDash(sv.state === 'z' ? [4, 4] : [2, 3]);
     ctx.beginPath();
     ctx.moveTo(w.a.x, w.a.y);
     ctx.lineTo(w.b.x, w.b.y);
     ctx.stroke();
-    ctx.setLineDash([]);
-
-    if ((sv.state === 'e' || sv.state === 'z') && zoom >= 0.65) {
+    ctx.setLineDash([]);    if (sv && (sv.state === 'e' || sv.state === 'z') && zoom >= 0.65) {
       const mx = (w.a.x + w.b.x) / 2;
       const my = (w.a.y + w.b.y) / 2;
       ctx.save();
@@ -1101,7 +1122,7 @@ export function drawScene(opts: SceneOptions) {
       ctx.restore();
     }
 
-    if (bus && zoom >= 0.65) {
+    if (sv && bus && zoom >= 0.65) {
       const len = Math.hypot(w.b.x - w.a.x, w.b.y - w.a.y);
       if (len >= 24) {
         const mx = (w.a.x + w.b.x) / 2;
@@ -1126,7 +1147,7 @@ export function drawScene(opts: SceneOptions) {
       }
     }
 
-    if (animate && sv.value !== 0 && sv.width === 1 && lenIsLong(w)) {
+    if (animate && sv && sv.value !== 0 && sv.width === 1 && lenIsLong(w)) {
       ctx.save();
       ctx.strokeStyle = opts.theme === 'paper' ? 'rgba(255,255,255,0.65)' : 'rgba(255,255,255,0.5)';
       ctx.lineWidth = 1.1;
@@ -1169,7 +1190,7 @@ export function drawScene(opts: SceneOptions) {
     if (!inView(b)) continue;
     const isSel = selComp.has(comp.id);
     const isHover = hoverCompId === comp.id;
-    drawCompOuter(ctx, comp, pal2, sim, false);
+    drawCompOuter(ctx, comp, pal2, view, false);
 
     if (comp.kind === 'text') {
       const lines = (comp.attrs.text ?? '').split('\n');
@@ -1292,7 +1313,7 @@ export function drawScene(opts: SceneOptions) {
     const comp = opts.ghost;
     ctx.save();
     ctx.globalAlpha = 0.72;
-    drawCompOuter(ctx, comp, pal2, sim, true);
+    drawCompOuter(ctx, comp, pal2, view, true);
     ctx.restore();
     const b = rotatedBounds(comp);
     ctx.save();
@@ -1339,10 +1360,9 @@ export function drawScene(opts: SceneOptions) {
 
   // --- wire hover probe -------------------------------------------------
   if (opts.hover?.type === 'wire') {
-    const idx = doc.wires.findIndex((w) => w.id === hoverWireId);
-    if (idx >= 0) {
-      const w = doc.wires[idx];
-      const sv = sim.valueOfWire(idx);
+    const w = doc.wires.find((x) => x.id === hoverWireId);
+    const sv = w ? view.valueOfWireAt(w.id) : null;
+    if (w && sv) {
       const value =
         sv.state === 'e'
           ? `E · ${sv.width} bit`

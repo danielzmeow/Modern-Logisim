@@ -248,7 +248,7 @@ export function emptyDoc(name = 'Untitled Circuit'): Doc {
   return { version: 1, name, comps: [], wires: [] };
 }
 
-export type SimWireState = 'known' | 'z' | 'e';
+export type { SimWireState } from './value';
 
 export interface ProjectSnapshot {
   version: 2;

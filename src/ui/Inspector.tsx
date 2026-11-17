@@ -3,7 +3,8 @@ import { useEditor } from '../editor/store';
 import type { ComponentInstance, Facing } from '../model/types';
 import { buildNetlist } from '../model/netlist';
 import { customLaneBits, effectiveBitEnd, hasCustomBitEnd, laneBits } from '../model/buses';
-import { sim } from '../model/sim';
+import { sim, type SimValue } from '../model/sim';
+import { createSimView, type SimView } from '../model/simView';
 import { viewControls } from '../canvas/view';
 import { CompIcon } from './icons';
 import { useT } from './useT';
@@ -34,6 +35,32 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
       <div className="px-3.5 pb-3">{children}</div>
     </div>
   );
+}
+
+/** Neutral placeholder for reads in detached views: no value, no error. */
+const NO_VALUE: SimValue = { value: 0, width: 1, high: false, state: 'z', known: 0, error: 0 };
+
+/**
+ * Mapped read access from the viewed circuit to the simulated root netlist.
+ * Re-created when the view location changes; the value reads themselves go
+ * straight to the simulator, so the view stays fresh every render.
+ */
+function useSimView(): SimView {
+  const circuits = useEditor((s) => s.circuits);
+  const rootId = useEditor((s) => s.simRootId);
+  const circuitId = useEditor((s) => s.currentCircuit);
+  const path = useEditor((s) => s.simPath);
+  return useMemo(
+    () => createSimView(sim, { circuits, rootId, circuitId, path }),
+    [circuits, rootId, circuitId, path],
+  );
+}
+
+/** Q readout for stateful chips; '—' when the view is detached. */
+function qOf(view: SimView, comp: ComponentInstance): string {
+  const sv = view.valueOfPortAt(comp.id, 'q');
+  if (!sv) return '—';
+  return sv.value ? '1' : '0';
 }
 
 function Row({ label, children }: { label: string; children: ReactNode }) {
@@ -198,19 +225,23 @@ function HexField({ comp }: { comp: ComponentInstance }) {
   );
 }
 
-function PinValueField({ comp }: { comp: ComponentInstance }) {
+function PinValueField({ comp, view }: { comp: ComponentInstance; view: SimView }) {
   const { t } = useT();
   const bits = Math.max(1, Math.min(32, comp.attrs.bits ?? 1));
   const simTick = useEditor((s) => s.simTick);
-  const [text, setText] = useState(() => sim.pinValue(comp.id).toString(16).toUpperCase());
+  const runtimeValue = view.pinValueAt(comp.id);
+  const displayValue = runtimeValue === null ? '' : runtimeValue.toString(16).toUpperCase();
+  const [text, setText] = useState(displayValue);
   const [focused, setFocused] = useState(false);
   useEffect(() => {
-    if (!focused) setText(sim.pinValue(comp.id).toString(16).toUpperCase());
-  }, [simTick, comp.id, focused]);
+    if (!focused) setText(displayValue);
+  }, [simTick, displayValue, focused]);
   useEffect(() => {
-    setText(sim.pinValue(comp.id).toString(16).toUpperCase());
+    setText(displayValue);
   }, [comp.id]);
   const commit = (raw = text) => {
+    // Runtime pin writes only exist in the root circuit view.
+    if (!view.canWrite) return;
     const cleaned = raw.trim().replace(/^0x/i, '').replace(/[^0-9a-f]/gi, '');
     const parsed = parseInt(cleaned || '0', 16);
     const mask = (2 ** bits - 1) >>> 0;
@@ -233,6 +264,7 @@ function PinValueField({ comp }: { comp: ComponentInstance }) {
         value={text}
         aria-label={t('aria.runValue')}
         spellCheck={false}
+        readOnly={!view.canWrite}
         onFocus={() => setFocused(true)}
         onChange={(e) => setText(e.target.value)}
         onBlur={() => {
@@ -245,13 +277,13 @@ function PinValueField({ comp }: { comp: ComponentInstance }) {
             (e.target as HTMLInputElement).blur();
           }
           if (e.key === 'Escape') {
-            setText(sim.pinValue(comp.id).toString(16).toUpperCase());
+            setText(displayValue);
             (e.target as HTMLInputElement).blur();
           }
         }}
       />
       <div className="mt-1 font-mono text-[12px] text-[var(--text-faint)]">
-        = {sim.pinValue(comp.id)} · {t('inspector.runtimeValueHint')}
+        = {view.canWrite ? text || '0' : (displayValue || '—')} · {t('inspector.runtimeValueHint')}
       </div>
     </div>
   );
@@ -369,7 +401,7 @@ function BitEndField({ comp }: { comp: ComponentInstance }) {
   );
 }
 
-function MemoryField({ comp }: { comp: ComponentInstance }) {
+function MemoryField({ comp, view }: { comp: ComponentInstance; view: SimView }) {
   const { t } = useT();
   const simTick = useEditor((s) => s.simTick);
   const addrBits = Math.max(1, Math.min(20, comp.attrs.addrBits ?? 4));
@@ -390,7 +422,9 @@ function MemoryField({ comp }: { comp: ComponentInstance }) {
         `${(pageStart + i).toString(16).toUpperCase().padStart(addrDigits, '0')}: ${fmt(values[pageStart + i] ?? 0)}`,
     ).join('\n');
   const currentValues = () =>
-    sim.netOfPort(comp.id, 'dout') >= 0 ? sim.memoryValues(comp) : comp.attrs.memory ?? [];
+    view.netOfPortAt(comp.id, 'dout') >= 0
+      ? view.memoryValuesAt(comp) ?? comp.attrs.memory ?? []
+      : comp.attrs.memory ?? [];
   const [text, setText] = useState(() => fromValues(currentValues()));
   const [focused, setFocused] = useState(false);
 
@@ -426,7 +460,7 @@ function MemoryField({ comp }: { comp: ComponentInstance }) {
       }
     }
     useEditor.getState().updateComp(comp.id, { memory: values }, `mem:${comp.id}`);
-    sim.loadMemory(comp, values);
+    view.loadMemoryAt({ ...comp, attrs: { ...comp.attrs, memory: values } }, values);
     setText(fromValues(values));
     viewControls.invalidate();
   };
@@ -540,6 +574,7 @@ const LED_SWATCHES = [
 
 function CompEditor({ comp }: { comp: ComponentInstance }) {
   const { t, lang } = useT();
+  const view = useSimView();
   const update = useEditor((s) => s.updateComp);
   const updateGeom = useEditor((s) => s.updateCompGeom);
   const duplicate = useEditor((s) => s.duplicateSelection);
@@ -651,7 +686,7 @@ function CompEditor({ comp }: { comp: ComponentInstance }) {
               {t('inspector.dataInputs', { n: 1 << (comp.attrs.fans ?? 1), bits })}
             </div>
           )}
-          {comp.kind === 'input' && bits > 1 && <PinValueField comp={comp} />}
+          {comp.kind === 'input' && bits > 1 && <PinValueField comp={comp} view={view} />}
         </Section>
       )}
 
@@ -686,8 +721,8 @@ function CompEditor({ comp }: { comp: ComponentInstance }) {
           </Row>
           <div className="mt-1.5 font-mono text-[12px] text-[var(--text-faint)]">
             {comp.kind === 'dff'
-              ? t('inspector.qReadout', { q: sim.valueOfPort(comp.id, 'q').value ? '1' : '0' })
-              : t('inspector.stateReadout', { q: sim.valueOfPort(comp.id, 'q').value ? '1' : '0' })}
+              ? t('inspector.qReadout', { q: qOf(view, comp) })
+              : t('inspector.stateReadout', { q: qOf(view, comp) })}
           </div>
         </Section>
       )}
@@ -695,7 +730,7 @@ function CompEditor({ comp }: { comp: ComponentInstance }) {
       {comp.kind === 'sr' && (
         <Section title={t('inspector.trigger')}>
           <div className="font-mono text-[12px] text-[var(--text-faint)]">
-            {t('inspector.stateReadout', { q: sim.valueOfPort(comp.id, 'q').value ? '1' : '0' })}
+            {t('inspector.stateReadout', { q: qOf(view, comp) })}
           </div>
         </Section>
       )}
@@ -834,7 +869,7 @@ function CompEditor({ comp }: { comp: ComponentInstance }) {
             />
           </Row>
           <div className="mt-1.5 font-mono text-[12px] text-[var(--text-faint)]">
-            Q = {comp.kind === 'counter' ? sim.valueOfPort(comp.id, 'q').value : sim.valueOfPort(comp.id, 'q').value}
+            Q = {qOf(view, comp)}
           </div>
         </Section>
       )}
@@ -847,7 +882,7 @@ function CompEditor({ comp }: { comp: ComponentInstance }) {
           <Row label={t('inspector.dataBits')}>
             <Num value={comp.attrs.dataBits ?? 8} min={1} max={32} suffix={t('inspector.bit')} onChange={(n) => update(comp.id, { dataBits: n })} />
           </Row>
-          <MemoryField comp={comp} />
+          <MemoryField comp={comp} view={view} />
         </Section>
       )}
 
@@ -1095,19 +1130,24 @@ function MultiEditor({ comps, wires }: { comps: ComponentInstance[]; wires: numb
 
 function WireEditor({ count }: { count: number }) {
   const { lang, t } = useT();
-  const doc = useEditor((s) => s.doc);
   const selWires = useEditor((s) => s.selWires);
   const remove = useEditor((s) => s.deleteSelection);
   const simTick = useEditor((s) => s.simTick);
+  const view = useSimView();
   const info = useMemo(() => {
-    const nl = buildNetlist(doc);
-    const first = doc.wires.findIndex((w) => selWires.includes(w.id));
-    if (first < 0) return null;
-    const net = nl.wireNet[first];
-    const sv = sim.valueOfNet(net);
-    const issue = nl.issues.find((entry) => entry.net === net);
-    return { width: sv.width, value: sv.value, net, issue: !!issue };
-  }, [doc, selWires, simTick]);
+    const first = selWires[0];
+    if (!first) return null;
+    const net = view.netOfWireAt(first);
+    const sv = view.valueOfWireAt(first);
+    if (!sv) return { detached: true as const };
+    return {
+      detached: false as const,
+      width: sv.width,
+      value: sv.value,
+      net,
+      issue: view.widthIssueAt(first),
+    };
+  }, [selWires, simTick, view]);
   return (
     <>
       <div className="px-3.5 pb-3 pt-1">
@@ -1121,7 +1161,7 @@ function WireEditor({ count }: { count: number }) {
           </div>
         </div>
       </div>
-      {info && (
+      {info && !info.detached && (
         <Section title={t('inspector.signalValue')}>
           <div className="stat-row">
             <span>{t('inspector.width')}</span>
@@ -1144,6 +1184,13 @@ function WireEditor({ count }: { count: number }) {
               {t('inspector.widthIssueHint')}
             </div>
           )}
+        </Section>
+      )}
+      {info?.detached && (
+        <Section title={t('inspector.signalValue')}>
+          <p className="text-[12px] leading-[1.6] text-[var(--text-secondary)]">
+            {t('inspector.simDetached')}
+          </p>
         </Section>
       )}
       <Section title={t('inspector.actions')}>
@@ -1191,6 +1238,7 @@ export function Inspector() {
   const setInspector = useEditor((s) => s.setInspector);
   const running = useEditor((s) => s.running);
   const simTick = useEditor((s) => s.simTick);
+  const view = useSimView();
   const comps = doc.comps.filter((c) => selComps.includes(c.id));
   const selectedWires = doc.wires.filter((w) => selWires.includes(w.id));
   const emptyCircuit = doc.comps.length === 0 && doc.wires.length === 0;
@@ -1198,7 +1246,26 @@ export function Inspector() {
   const stats = useMemo(() => {
     if (comps.length || selectedWires.length) return null;
     const nl = buildNetlist(doc);
-    const high = nl.nets.filter((n) => sim.valueOfNet(n.id).value !== 0).length;
+    // Runtime values are read through the view so instance and root views are
+    // both correct; detached views report none.
+    let high = 0;
+    if (view.attached) {
+      for (const n of nl.nets) {
+        let value: number | null = null;
+        for (const p of n.ports) {
+          const sv = view.valueOfPortAt(p.compId, p.port);
+          if (sv) {
+            value = sv.value;
+            break;
+          }
+        }
+        if (value === null && n.wires.length) {
+          const sv = view.valueOfWireAt(doc.wires[n.wires[0]].id);
+          value = sv ? sv.value : null;
+        }
+        if (value !== null && value !== 0) high++;
+      }
+    }
     return {
       comps: doc.comps.length,
       wires: doc.wires.length,
@@ -1207,7 +1274,7 @@ export function Inspector() {
       high,
       issues: nl.issues.length,
     };
-  }, [doc, comps.length, selectedWires.length, simTick]);
+  }, [doc, comps.length, selectedWires.length, simTick, view]);
 
   return (
     <aside className="side-panel-right relative z-20 flex w-[280px] shrink-0 flex-col">
@@ -1256,10 +1323,12 @@ export function Inspector() {
                     <span>{t('inspector.buses')}</span>
                     <b>{stats?.buses ?? 0}</b>
                   </div>
-                  <div className="stat-row">
-                    <span>{t('inspector.highNets')}</span>
-                    <b className={stats?.high ? '!text-[var(--success-text)]' : ''}>{stats?.high ?? 0}</b>
-                  </div>
+                  {view.attached && (
+                    <div className="stat-row">
+                      <span>{t('inspector.highNets')}</span>
+                      <b className={stats?.high ? '!text-[var(--success-text)]' : ''}>{stats?.high ?? 0}</b>
+                    </div>
+                  )}
                   {!!stats?.issues && (
                     <div className="stat-row">
                       <span>{t('inspector.widthIssues')}</span>

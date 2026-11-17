@@ -19,8 +19,12 @@ export interface Netlist {
   nets: Net[];
   portNet: Map<string, number>;
   wireNet: number[];
+  /** Flattened wire id -> net; instance wires are prefixed by their instance path. */
+  wireIdNet: Map<string, number>;
   pointNet: Map<string, number>;
   issues: NetIssue[];
+  /** Stub nets created for width-incompatible ports; the simulator pins them to E. */
+  forcedError: Set<number>;
 }
 
 class DSU {
@@ -171,10 +175,12 @@ export function buildNetlist(doc: Doc): Netlist {
   }
 
   const wireNet: number[] = [];
+  const wireIdNet = new Map<string, number>();
   for (let i = 0; i < wires.length; i++) {
     const root = dsu.find(wireIdx[i].a);
     const netId = netForRoot(root);
     wireNet.push(netId);
+    wireIdNet.set(wires[i].id, netId);
     nets[netId].wires.push(i);
   }
 
@@ -193,6 +199,25 @@ export function buildNetlist(doc: Doc): Netlist {
     }
   }
 
-  return { nets, portNet, wireNet, pointNet, issues };
+  // Detach every port whose nonzero width disagrees with the net maximum into
+  // its own stub net pinned to E. The port can neither drive nor read the
+  // original net, while matching-width ports on it keep communicating.
+  // Width-0 (adaptive) ports stay attached.
+  const forcedError = new Set<number>();
+  for (const issue of issues) {
+    const net = nets[issue.net];
+    for (const p of issue.ports) {
+      if (p.bits === net.width) continue;
+      const stub: Net = { id: nets.length, width: p.bits, ports: [{ ...p }], wires: [] };
+      nets.push(stub);
+      forcedError.add(stub.id);
+      net.ports = net.ports.filter((x) => x.compId !== p.compId || x.port !== p.port);
+      portNet.set(`${p.compId}:${p.port}`, stub.id);
+      const pt = compPorts.get(p.compId)?.find((x) => x.name === p.port)?.point;
+      if (pt) pointNet.set(pointKey(pt), stub.id);
+    }
+  }
+
+  return { nets, portNet, wireNet, wireIdNet, pointNet, issues, forcedError };
 }
 

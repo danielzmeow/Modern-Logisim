@@ -32,6 +32,9 @@ export const messages = {
     'topbar.export': '导出 .circ',
     'topbar.search': '搜索或运行命令',
     'topbar.command': '命令',
+    'topbar.simDetached': '未连接仿真根 · 运行值不可用',
+    'topbar.simPathTitle': '仿真根与实例路径',
+    'topbar.backInstance': '返回上级实例',
 
     'canvas.tools': '画布工具',
     'canvas.select': '选择',
@@ -51,6 +54,8 @@ export const messages = {
 
     'status.simRunning': '仿真运行中',
     'status.simPaused': '仿真已暂停',
+    'sim.oscillation':
+      '检测到振荡：仿真已停止，不稳定的网络已标记为 E（红色）。断开反馈环路后重新运行即可恢复。',
     'status.coords': 'X {x}   Y {y}',
     'status.noCoords': 'X —   Y —',
     'status.zoomIn': '放大 ⌘+',
@@ -73,6 +78,7 @@ export const messages = {
     'inspector.highNets': '高电平网络',
     'inspector.widthIssues': '位宽冲突',
     'inspector.widthIssueHint': '这条网络连接了不同位宽的端口；仿真会按最宽端口处理。',
+    'inspector.simDetached': '当前电路未连接到仿真根，没有运行值；编辑仍然可用。',
     'inspector.quickActions': '快速操作',
     'inspector.nothingSelected': '未选中对象',
     'inspector.nothingSelectedHint': '选择元件、导线或文字，即可在这里编辑属性。',
@@ -292,6 +298,8 @@ export const messages = {
     'menu.canvas': '画布',
     'menu.editInspector': '在检查器中编辑',
     'menu.toggleLevel': '翻转电平',
+    'menu.viewInstance': '查看此实例运行状态',
+    'menu.exitInstance': '返回上级实例',
     'menu.rotateCW': '顺时针旋转',
     'menu.rotateCCW': '逆时针旋转',
     'menu.deleteSelection': '删除选中',
@@ -538,6 +546,9 @@ export const messages = {
     'topbar.export': 'Export .circ',
     'topbar.search': 'Search or run a command',
     'topbar.command': 'Command',
+    'topbar.simDetached': 'Detached from sim root · no runtime values',
+    'topbar.simPathTitle': 'Simulation root and instance path',
+    'topbar.backInstance': 'Back to parent instance',
 
     'canvas.tools': 'Canvas tools',
     'canvas.select': 'Select',
@@ -557,6 +568,8 @@ export const messages = {
 
     'status.simRunning': 'Simulation running',
     'status.simPaused': 'Simulation paused',
+    'sim.oscillation':
+      'Oscillation detected: simulation stopped and the unstable nets are marked E (red). Break the feedback loop and run again to recover.',
     'status.coords': 'X {x}   Y {y}',
     'status.noCoords': 'X —   Y —',
     'status.zoomIn': 'Zoom in ⌘+',
@@ -579,6 +592,7 @@ export const messages = {
     'inspector.highNets': 'High nets',
     'inspector.widthIssues': 'Width conflicts',
     'inspector.widthIssueHint': 'This net connects ports with different widths; simulation uses the widest port.',
+    'inspector.simDetached': 'This circuit is detached from the simulation root; no runtime values. Editing still works.',
     'inspector.quickActions': 'Quick actions',
     'inspector.nothingSelected': 'Nothing selected',
     'inspector.nothingSelectedHint': 'Select a component, wire, or text label to edit its properties here.',
@@ -798,6 +812,8 @@ export const messages = {
     'menu.canvas': 'Canvas',
     'menu.editInspector': 'Edit in inspector',
     'menu.toggleLevel': 'Toggle level',
+    'menu.viewInstance': 'View this instance state',
+    'menu.exitInstance': 'Back to parent instance',
     'menu.rotateCW': 'Rotate clockwise',
     'menu.rotateCCW': 'Rotate counterclockwise',
     'menu.deleteSelection': 'Delete selection',

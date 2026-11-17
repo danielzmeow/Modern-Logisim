@@ -175,7 +175,7 @@ describe('new arithmetic and memory components', () => {
     const doc: Doc = { version: 1, name: 'reg', comps: [], wires: [] };
     const d = createComp('input', { x: 0, y: 0 }, 'east', 'en', { bits: 4 });
     const clk = createComp('input', { x: 0, y: 60 }, 'east', 'en', { bits: 1 });
-    const reg = createComp('register', { x: 140, y: 20 });
+    const reg = createComp('register', { x: 140, y: 20 }, 'east', 'en', { bits: 4 });
     const q = createComp('output', { x: 280, y: 20 }, 'west', 'en', { bits: 4 });
     doc.comps.push(d, clk, reg, q);
     wire(doc, port(d, 'out'), port(reg, 'd'));
@@ -624,6 +624,73 @@ describe('width diagnostics', () => {
     doc.comps.push(input, output);
     wire(doc, port(input, 'out'), port(output, 'in'));
     expect(buildNetlist(doc).issues).toHaveLength(0);
+  });
+
+  it('isolates mismatched-width ports onto forced-error stub nets', () => {
+    const doc: Doc = { version: 1, name: 'width-iso', comps: [], wires: [] };
+    const a8 = createComp('input', { x: 0, y: 0 }, 'east', 'en', { bits: 8 });
+    const b1 = createComp('input', { x: 0, y: 60 }, 'east', 'en', { bits: 1 });
+    const out8 = createComp('output', { x: 180, y: 0 }, 'west', 'en', { bits: 8 });
+    const out1 = createComp('output', { x: 180, y: 60 }, 'west', 'en', { bits: 1 });
+    doc.comps.push(a8, b1, out8, out1);
+    wire(doc, port(a8, 'out'), port(out8, 'in'));
+    wire(doc, port(b1, 'out'), port(out8, 'in'));
+    wire(doc, port(b1, 'out'), port(out1, 'in'));
+
+    const netlist = buildNetlist(doc);
+    expect(netlist.issues).toHaveLength(1);
+    const bus = netlist.portNet.get(`${a8.id}:out`)!;
+    expect(netlist.portNet.get(`${out8.id}:in`)).toBe(bus);
+    const bNet = netlist.portNet.get(`${b1.id}:out`)!;
+    const oNet = netlist.portNet.get(`${out1.id}:in`)!;
+    expect(bNet).not.toBe(bus);
+    expect(oNet).not.toBe(bus);
+    expect(bNet).not.toBe(oNet);
+    expect(netlist.nets[bNet].width).toBe(1);
+    expect(netlist.nets[oNet].width).toBe(1);
+    expect(netlist.forcedError.has(bNet)).toBe(true);
+    expect(netlist.forcedError.has(oNet)).toBe(true);
+    expect(netlist.forcedError.has(bus)).toBe(false);
+
+    const sim = new Simulator();
+    sim.update(doc);
+    sim.setPinValue(a8.id, 0xa5);
+    sim.setPinValue(b1.id, 1);
+    sim.frame(0, false);
+    const v8 = sim.valueOfPort(out8.id, 'in');
+    expect(v8.state).toBe('known');
+    expect(v8.value).toBe(0xa5);
+    expect(sim.valueOfPort(out1.id, 'in').state).toBe('e');
+    expect(sim.valueOfPort(b1.id, 'out').state).toBe('e');
+
+    sim.setPinValue(b1.id, 0);
+    sim.frame(1, false);
+    expect(sim.valueOfPort(out8.id, 'in').value).toBe(0xa5);
+    expect(sim.valueOfPort(out8.id, 'in').state).toBe('known');
+    expect(sim.valueOfPort(out1.id, 'in').state).toBe('e');
+  });
+
+  it('keeps adaptive width-0 ports attached to the original net', () => {
+    const doc: Doc = { version: 1, name: 'width-tunnel', comps: [], wires: [] };
+    const a8 = createComp('input', { x: 0, y: 0 }, 'east', 'en', { bits: 8 });
+    const out1 = createComp('output', { x: 180, y: 0 }, 'west', 'en', { bits: 1 });
+    const t = createComp('tunnel', { x: 90, y: -40 }, 'east', 'en', { label: 'T' });
+    doc.comps.push(a8, out1, t);
+    wire(doc, port(a8, 'out'), port(out1, 'in'));
+    wire(doc, port(t, 'net'), port(a8, 'out'));
+
+    const netlist = buildNetlist(doc);
+    expect(netlist.issues).toHaveLength(1);
+    const bus = netlist.portNet.get(`${a8.id}:out`)!;
+    expect(netlist.portNet.get(`${t.id}:net`)).toBe(bus);
+    expect(netlist.forcedError.has(bus)).toBe(false);
+
+    const sim = new Simulator();
+    sim.update(doc);
+    sim.setPinValue(a8.id, 0xa5);
+    sim.frame(0, false);
+    expect(sim.valueOfPort(t.id, 'net').value).toBe(0xa5);
+    expect(sim.valueOfPort(t.id, 'net').state).toBe('known');
   });
 });
 

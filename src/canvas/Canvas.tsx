@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { useEditor } from '../editor/store';
 import { sim } from '../model/sim';
+import { createSimView } from '../model/simView';
 import { drawScene, type WiringPreview } from './draw';
 import { PALETTES } from './theme';
 import { useT } from '../ui/useT';
@@ -111,6 +112,12 @@ export default function Canvas() {
     const state = () => useEditor.getState();
     const invalidate = () => {
       dirtyRef.current = true;
+    };
+    // Runtime Input/Button writes only exist in the root circuit view;
+    // instance and detached views are read-only for the simulation.
+    const canWriteRuntime = () => {
+      const st = state();
+      return st.simRootId !== null && st.simPath !== null && st.simPath.length === 0;
     };
 
     const toWorld = (clientX: number, clientY: number): Point => {
@@ -341,7 +348,7 @@ export default function Canvas() {
           additive,
           moved: false,
         };
-        if (comp.kind === 'button' && !additive) sim.setButton(comp.id, true);
+        if (comp.kind === 'button' && !additive && canWriteRuntime()) sim.setButton(comp.id, true);
         st.setDragMode('move');
         invalidate();
         setCursor();
@@ -474,7 +481,7 @@ export default function Canvas() {
       if (moved) {
         st.commitSnapshot(inter.before);
       } else if (comp) {
-        if (comp.kind === 'input') {
+        if (comp.kind === 'input' && canWriteRuntime()) {
           sim.togglePin(comp);
           invalidate();
         }
@@ -513,7 +520,7 @@ export default function Canvas() {
         if (!inter.moved && inter.startPort) {
           const comp = st.doc.comps.find((c) => c.id === inter.startPort!.compId);
           if (comp && st.tool === 'select') {
-            if (comp.kind === 'input' && (comp.attrs.bits ?? 1) === 1) sim.togglePin(comp);
+            if (comp.kind === 'input' && (comp.attrs.bits ?? 1) === 1 && canWriteRuntime()) sim.togglePin(comp);
             st.selectComp(comp.id);
             invalidate();
           }
@@ -811,7 +818,7 @@ export default function Canvas() {
         if (st.selComps.length) {
           for (const id of st.selComps) {
             const c = st.doc.comps.find((x) => x.id === id);
-            if (c?.kind === 'input' && (c.attrs.bits ?? 1) === 1) sim.togglePin(c);
+            if (c?.kind === 'input' && (c.attrs.bits ?? 1) === 1 && canWriteRuntime()) sim.togglePin(c);
           }
           invalidate();
         }
@@ -897,7 +904,9 @@ export default function Canvas() {
         s.canvasTheme !== prev.canvasTheme ||
         s.pendingKind !== prev.pendingKind ||
         s.running !== prev.running ||
-        s.tool !== prev.tool
+        s.tool !== prev.tool ||
+        s.simRootId !== prev.simRootId ||
+        s.simPath !== prev.simPath
       ) {
         invalidate();
       }
@@ -914,12 +923,21 @@ export default function Canvas() {
       }
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       ctx.clearRect(0, 0, w, h);
-      sim.update(st.doc, st.circuits);
+      // The simulator always flattens from the fixed root circuit; the view
+      // adapter maps the currently viewed circuit onto that netlist.
+      const rootDoc = st.simRootId ? st.circuits[st.simRootId] : undefined;
+      sim.update(rootDoc ?? st.doc, st.circuits, st.simRootId ?? undefined);
       sim.frame(now, st.running);
+      const view = createSimView(sim, {
+        circuits: st.circuits,
+        rootId: st.simRootId,
+        circuitId: st.currentCircuit,
+        path: st.simPath,
+      });
       drawScene({
         ctx,
         doc: st.doc,
-        sim,
+        view,
         selComps: st.selComps,
         selWires: st.selWires,
         hover: hoverRef.current,
@@ -944,6 +962,9 @@ export default function Canvas() {
       if (disposed) return;
       raf = requestAnimationFrame(frame);
       const st = state();
+      // One-shot oscillation watchdog: pause and toast the first time the
+      // kernel reports an oscillating circuit; a later convergence re-arms it.
+      st.reportOscillation(sim.oscillation !== null);
       const animating = st.running;
       if (!dirtyRef.current && !animating) return;
       // Stay around 60fps even on 120Hz displays.
